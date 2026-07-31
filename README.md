@@ -2,7 +2,7 @@
 
 SoundMaster est une application Windows locale destinée aux joueurs : soundboard, lecture audio hors ligne, génération vocale locale et routage vers un casque ou un câble audio virtuel.
 
-> **État actuel — v0.2.0 : fondation fonctionnelle validée**
+> **État actuel — v0.2.1 : fondation fonctionnelle validée**
 >
 > Cette release fournit le socle PyQt6, le tableau de bord, l’explorateur Myinstants intégré, le cache hors ligne, les paramètres de conformité, les raccourcis Windows et la génération Qwen3-TTS locale optionnelle. Les modèles et les runtimes lourds restent téléchargeables séparément.
 
@@ -136,10 +136,10 @@ Build local Windows :
 
 ```powershell
 python -m pip install ".[dev,build]"
-.\packaging\build_windows.ps1 -Version 0.2.0
+.\packaging\build_windows.ps1 -Version 0.2.1
 ```
 
-Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.2.0` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
+Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.2.1` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
 
 ```powershell
 git tag v0.2.0

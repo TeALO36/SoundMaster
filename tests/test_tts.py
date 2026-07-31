@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -52,6 +53,11 @@ def test_qwen_empty_reference_text_uses_local_transcription(
             )
         ),
     )
+
+    def fake_write(path: str, _audio: object, _sample_rate: int) -> None:
+        Path(path).write_bytes(b"RIFF" + b"\\0" * 64)
+
+    monkeypatch.setitem(sys.modules, "soundfile", SimpleNamespace(write=fake_write))
 
     result = service.generate_clone(
         "Bonjour",

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1 — 2026-08-01
+
+### Fixed
+
+- Made the transcript-free TTS regression test independent of the optional `soundfile` runtime so the Windows release workflow can validate the project before packaging.
+
 ## 0.2.0 — 2026-08-01
 
 ### Added
