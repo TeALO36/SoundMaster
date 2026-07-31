@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environment
+.venv/
+venv/
+
+# Packaging
+build/
+dist/
+*.egg-info/
+
+# IDE / OS
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+
+# Freebuff/Desktop runtime data
+.freebuff/
+
+# Local runtime data (stored under the project only when explicitly configured)
+.runtime/
+logs/
+*.db
+*.db-shm
+*.db-wal
