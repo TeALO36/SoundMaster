@@ -10,12 +10,11 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 from soundmaster.core.config import AppPaths, load_config
-
 
 MODEL_DIR_ENV = "SOUNDMASTER_MODEL_DIR"
 

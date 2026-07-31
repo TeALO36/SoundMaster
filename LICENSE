@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 SoundMaster
+Copyright (c) 2026 SoundMaster project contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,13 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Scope of this license
+---------------------
+
+This MIT notice applies to the original SoundMaster source code authored for
+this repository. It does not grant rights to third-party dependencies, model
+weights, tokenizers, audio files, voice samples, trademarks, or content
+downloaded by the application. Those materials are subject to their own
+licenses, terms, permissions, and restrictions. See THIRD_PARTY_NOTICES.md and
+the corresponding upstream sources before redistributing them.

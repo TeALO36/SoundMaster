@@ -13,7 +13,7 @@ $BuildDir = Join-Path $Root "build"
 $GeneratedVersion = Join-Path $Root "src\soundmaster\_build_version.py"
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = "0.1.0"
+    $Version = "0.2.0"
 }
 $Version = $Version.Trim()
 if ($Version.StartsWith("v")) {
@@ -77,6 +77,8 @@ try {
     Set-Content -Path (Join-Path $PortableDir ".portable") -Value "SoundMaster portable mode" -Encoding utf8
     Copy-Item (Join-Path $Root "README.md") $PortableDir -Force
     Copy-Item (Join-Path $Root "LICENSE") $PortableDir -Force
+    Copy-Item (Join-Path $Root "CHANGELOG.md") $PortableDir -Force
+    Copy-Item (Join-Path $Root "THIRD_PARTY_NOTICES.md") $PortableDir -Force
 
     $PortableZip = Join-Path $DistDir "SoundMaster-v$Version-Portable.zip"
     Compress-Archive -Path $PortableDir -DestinationPath $PortableZip -CompressionLevel Optimal -Force

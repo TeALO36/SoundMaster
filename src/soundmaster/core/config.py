@@ -7,7 +7,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 APP_NAME = "SoundMaster"
 DATA_DIR_ENV = "SOUNDMASTER_DATA_DIR"
 
@@ -30,7 +29,7 @@ class AppPaths:
     logs: Path
 
     @classmethod
-    def from_environment(cls) -> "AppPaths":
+    def from_environment(cls) -> AppPaths:
         configured_dir = os.environ.get(DATA_DIR_ENV)
         if configured_dir:
             data_dir = Path(configured_dir).expanduser()

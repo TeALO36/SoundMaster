@@ -12,11 +12,10 @@ import json
 import os
 import tempfile
 from dataclasses import asdict, dataclass, field, fields
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-
 
 LEGAL_PROFILE_FILENAME = "legal_profile.json"
 PROFILE_VERSION = 1
@@ -214,14 +213,14 @@ class LegalProfile:
         return not reasons, reasons
 
     def mark_reviewed(self, reviewer_reference: str = "") -> None:
-        self.last_reviewed_at = datetime.now(timezone.utc).isoformat()
+        self.last_reviewed_at = datetime.now(UTC).isoformat()
         self.reviewer_reference = reviewer_reference.strip()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "LegalProfile":
+    def from_dict(cls, raw: dict[str, Any]) -> LegalProfile:
         def section(name: str, target: type[Any]) -> Any:
             value = raw.get(name, {})
             if not isinstance(value, dict):

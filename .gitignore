@@ -1,33 +1,69 @@
-# Python
+# Python bytecode and caches
 __pycache__/
 *.py[cod]
 *.pyo
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
+.pyright/
 
-# Virtual environment
+# Virtual environments and local package metadata
 .venv/
 venv/
+env/
+*.egg-info/
+.eggs/
 
-# Packaging
+# Build and release outputs
 build/
 dist/
-*.egg-info/
+build-*/
+dist-*/
+release/
+*.spec.bak
 
-# IDE / OS
-.vscode/
-.idea/
-*.code-workspace
-.DS_Store
-Thumbs.db
-
-# Freebuff/Desktop runtime data
-.freebuff/
-
-# Local runtime data (stored under the project only when explicitly configured)
+# SoundMaster runtime data
 .runtime/
+.freebuff/
 logs/
 *.db
 *.db-shm
 *.db-wal
+
+# Downloaded models and local audio are never committed.
+# Keep these outside the repository when possible with SOUNDMASTER_MODEL_DIR.
+models/
+.audio-cache/
+audio-cache/
+voice-samples/
+
+# Local configuration, credentials, and generated legal profile
+.env
+.env.*
+!.env.example
+legal_profile.json
+settings.local.json
+*.local.json
+*.secret
+*.pem
+*.p12
+*.pfx
+
+# IDE and editor files
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+
+# Windows and macOS noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.log

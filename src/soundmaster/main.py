@@ -9,8 +9,8 @@ from PyQt6.QtWidgets import QApplication
 from soundmaster.core.config import load_config
 from soundmaster.core.legal import load_legal_profile
 from soundmaster.core.logger import setup_logging
+from soundmaster.ui.main_window import MainWindow
 from soundmaster.version import __version__
-from soundmaster.ui.bootstrap_window import BootstrapWindow
 
 
 def main() -> int:
@@ -19,7 +19,7 @@ def main() -> int:
     config, paths = load_config()
     paths.ensure_runtime_directories()
     logger = setup_logging(paths.logs)
-    logger.info("Starting %s bootstrap", config.app_name)
+    logger.info("Starting %s", config.app_name)
     logger.info("Persistent data directory: %s", paths.data_dir)
 
     app = QApplication(sys.argv)
@@ -27,7 +27,7 @@ def main() -> int:
     app.setApplicationVersion(__version__)
 
     legal_profile = load_legal_profile(paths.legal_profile)
-    window = BootstrapWindow(legal_profile, paths.legal_profile)
+    window = MainWindow(legal_profile, paths.legal_profile, paths, config)
     window.show()
     exit_code = app.exec()
     logger.info("Application exited with code %s", exit_code)
