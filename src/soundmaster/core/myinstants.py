@@ -31,12 +31,17 @@ class MyInstantsError(RuntimeError):
 
 
 def search_myinstants(query: str, timeout: float = 15.0) -> list[MyInstantResult]:
-    """Search the public website and return links found in its result page."""
+    """Load the public catalog or search results and return playable sound links.
+
+    An empty query mirrors the official regional catalog instead of leaving the
+    embedded explorer blank. Search and catalog pages use the same result markup.
+    """
 
     query = query.strip()
-    if not query:
-        return []
-    url = "https://www.myinstants.com/en/search/?name=" + urllib.parse.quote_plus(query)
+    if query:
+        url = "https://www.myinstants.com/en/search/?name=" + urllib.parse.quote_plus(query)
+    else:
+        url = "https://www.myinstants.com/en/index/us/"
     request = urllib.request.Request(url, headers={"User-Agent": "SoundMaster/0.1 (local app)"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:

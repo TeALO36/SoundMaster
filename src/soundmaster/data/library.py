@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,10 +30,22 @@ class VoiceGeneration:
     created_at: str
 
 
+@dataclass(frozen=True, slots=True)
+class VoiceProfile:
+    id: int
+    name: str
+    sample_path: str
+    ref_text: str
+    engine_key: str
+    language: str
+    settings: dict[str, object]
+    created_at: str
+
+
 class SoundLibrary:
     """Small, dependency-free repository for local soundboard data."""
 
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
@@ -64,6 +77,16 @@ class SoundLibrary:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS voice_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                sample_path TEXT NOT NULL UNIQUE,
+                ref_text TEXT NOT NULL DEFAULT '',
+                engine_key TEXT NOT NULL DEFAULT 'qwen3-tts',
+                language TEXT NOT NULL DEFAULT 'Auto',
+                settings_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS voice_generations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
@@ -73,7 +96,7 @@ class SoundLibrary:
                 model TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
-            INSERT INTO schema_meta(key, value) VALUES ('version', '2')
+            INSERT INTO schema_meta(key, value) VALUES ('version', '3')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value;
             """
         )
@@ -145,6 +168,94 @@ class SoundLibrary:
         row = self._connection.execute("SELECT value FROM preferences WHERE key = ?", (key,)).fetchone()
         return str(row["value"]) if row else default
 
+    def add_voice_profile(
+        self,
+        name: str,
+        sample_path: Path,
+        ref_text: str = "",
+        engine_key: str = "qwen3-tts",
+        language: str = "Auto",
+        settings: dict[str, object] | None = None,
+    ) -> VoiceProfile:
+        encoded_settings = json.dumps(settings or {}, ensure_ascii=False, sort_keys=True)
+        self._connection.execute(
+            """
+            INSERT INTO voice_profiles(name, sample_path, ref_text, engine_key, language, settings_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(sample_path) DO UPDATE SET
+                name=excluded.name, ref_text=excluded.ref_text,
+                engine_key=excluded.engine_key, language=excluded.language,
+                settings_json=excluded.settings_json
+            """,
+            (
+                name.strip() or sample_path.stem,
+                str(sample_path),
+                ref_text.strip(),
+                engine_key,
+                language or "Auto",
+                encoded_settings,
+            ),
+        )
+        self._connection.commit()
+        row = self._connection.execute(
+            "SELECT * FROM voice_profiles WHERE sample_path = ?", (str(sample_path),)
+        ).fetchone()
+        assert row is not None
+        return self._voice_profile(row)
+
+    def voice_profiles(self, query: str = "") -> list[VoiceProfile]:
+        if query.strip():
+            rows = self._connection.execute(
+                "SELECT * FROM voice_profiles WHERE LOWER(name) LIKE ? ORDER BY id DESC",
+                (f"%{query.strip().lower()}%",),
+            ).fetchall()
+        else:
+            rows = self._connection.execute(
+                "SELECT * FROM voice_profiles ORDER BY id DESC"
+            ).fetchall()
+        return [self._voice_profile(row) for row in rows]
+
+    def update_voice_profile(
+        self,
+        profile_id: int,
+        *,
+        name: str,
+        ref_text: str,
+        engine_key: str,
+        language: str,
+        settings: dict[str, object],
+    ) -> VoiceProfile | None:
+        self._connection.execute(
+            """
+            UPDATE voice_profiles SET name=?, ref_text=?, engine_key=?, language=?, settings_json=?
+            WHERE id=?
+            """,
+            (
+                name.strip() or "Voix sans nom",
+                ref_text.strip(),
+                engine_key,
+                language or "Auto",
+                json.dumps(settings, ensure_ascii=False, sort_keys=True),
+                profile_id,
+            ),
+        )
+        self._connection.commit()
+        row = self._connection.execute(
+            "SELECT * FROM voice_profiles WHERE id = ?", (profile_id,)
+        ).fetchone()
+        return self._voice_profile(row) if row is not None else None
+
+    def delete_voice_profile(self, profile_id: int) -> Path | None:
+        row = self._connection.execute(
+            "SELECT sample_path FROM voice_profiles WHERE id = ?", (profile_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        sample_path = Path(str(row["sample_path"]))
+        self._connection.execute("DELETE FROM voice_profiles WHERE id = ?", (profile_id,))
+        self._connection.commit()
+        return sample_path
+
     def add_voice_generation(
         self, title: str, text: str, sample_path: Path, output_path: Path, model: str
     ) -> VoiceGeneration:
@@ -171,6 +282,25 @@ class SoundLibrary:
                 "SELECT * FROM voice_generations ORDER BY id DESC"
             ).fetchall()
         return [self._voice_generation(row) for row in rows]
+
+    @staticmethod
+    def _voice_profile(row: sqlite3.Row) -> VoiceProfile:
+        try:
+            settings = json.loads(str(row["settings_json"]))
+        except (TypeError, json.JSONDecodeError):
+            settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+        return VoiceProfile(
+            id=int(row["id"]),
+            name=str(row["name"]),
+            sample_path=str(row["sample_path"]),
+            ref_text=str(row["ref_text"]),
+            engine_key=str(row["engine_key"]),
+            language=str(row["language"]),
+            settings=settings,
+            created_at=str(row["created_at"]),
+        )
 
     @staticmethod
     def _item(row: sqlite3.Row) -> SoundItem:

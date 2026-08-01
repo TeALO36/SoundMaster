@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import QEvent, pyqtSignal
 from PyQt6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from soundmaster.core.myinstants import MyInstantResult
-from soundmaster.ui.theme import animate_opacity
 
 
 class MyInstantCard(QWidget):
     """A result card that never leaves the app for normal search/download actions."""
 
     preview_requested = pyqtSignal(object)
+    preview_hovered = pyqtSignal(object)
     favorite_requested = pyqtSignal(object)
     selection_changed = pyqtSignal(object, bool)
 
@@ -23,7 +23,7 @@ class MyInstantCard(QWidget):
         title = QLabel(f"<b>{result.title}</b>")
         title.setWordWrap(True)
         layout.addWidget(title)
-        source = QLabel("Myinstants · téléchargement local à la demande")
+        source = QLabel("Myinstants · aperçu en direct · favori = hors ligne")
         source.setObjectName("muted")
         layout.addWidget(source)
         self.select_check = QCheckBox("Sélectionner")
@@ -33,7 +33,8 @@ class MyInstantCard(QWidget):
         layout.addWidget(self.select_check)
         actions = QHBoxLayout()
         self.preview_button = QPushButton("▶ Tester")
-        self.preview_button.setToolTip("Télécharger temporairement puis lire dans votre casque")
+        self.preview_button.setToolTip("Lire en direct comme sur Myinstants, sans conserver le fichier")
+        self.preview_button.installEventFilter(self)
         self.preview_button.clicked.connect(lambda: self.preview_requested.emit(self.result))
         self.favorite_button = QPushButton("★ Ajouter aux favoris")
         self.favorite_button.setToolTip("Télécharger hors ligne et ajouter au tableau de bord")
@@ -42,6 +43,13 @@ class MyInstantCard(QWidget):
         actions.addWidget(self.favorite_button, 1)
         layout.addLayout(actions)
         self.setObjectName("myInstantCard")
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self.preview_button and event.type() == QEvent.Type.Enter:
+            # Warm the player while the pointer is over Tester, so the click only
+            # starts an already-negotiated stream instead of restarting the URL.
+            self.preview_hovered.emit(self.result)
+        return super().eventFilter(watched, event)
 
     def set_download_actions_enabled(self, enabled: bool) -> None:
         self.preview_button.setEnabled(enabled)
@@ -55,11 +63,3 @@ class MyInstantCard(QWidget):
 
     def is_selected(self) -> bool:
         return self.select_check.isChecked()
-
-    def enterEvent(self, event) -> None:
-        animate_opacity(self, 0.88, 1.0, 180)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        animate_opacity(self, 1.0, 0.94, 220)
-        super().leaveEvent(event)

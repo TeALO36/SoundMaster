@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0 — 2026-08-01
+
+### Added
+
+- Responsive 2–4 column grids for Dashboard favorites and the embedded Myinstants catalog.
+- Content-adaptive Dashboard spacing with recent-use items following the favorites grid.
+- Direct Myinstants previews without creating download jobs or cache files; favorites still download locally for offline use and shortcuts.
+- Tester/Stop playback control for local favorites, with automatic reset when playback ends or fails.
+- Persistent local voice bank with managed samples, microphone and Windows output recording, per-voice generation controls, and adjustable editor proportions.
+- Optional WASAPI loopback capture support through the `audio` extra.
+
+### Validation
+
+- 41 automated tests passed.
+- Ruff and Python compilation passed.
+- Offscreen PyQt6 UI smoke tests passed.
+
 ## 0.2.1 — 2026-08-01
 
 ### Fixed

@@ -61,6 +61,45 @@ def test_voice_worker_emits_frozen_generation_metadata(qapp: QApplication, tmp_p
     ]
 
 
+class AdvancedFakeVoiceService:
+    def __init__(self) -> None:
+        self.settings: dict[str, object] | None = None
+
+    def generate_clone(
+        self,
+        _text: str,
+        _sample: Path,
+        _ref_text: str,
+        output: Path,
+        _language: str,
+        _engine_key: str,
+        settings: dict[str, object],
+    ) -> Path:
+        self.settings = settings
+        return output
+
+
+def test_voice_worker_passes_advanced_settings_only_when_present(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    service = AdvancedFakeVoiceService()
+    worker = VoiceWorker(
+        service,
+        "Bonjour",
+        Path("sample.wav"),
+        "",
+        tmp_path / "voice.wav",
+        "French",
+        "qwen3-tts",
+        "Qwen/Qwen3-TTS",
+        {"temperature": 0.4, "speed": 1.1},
+    )
+
+    worker.run()
+
+    assert service.settings == {"temperature": 0.4, "speed": 1.1}
+
+
 def test_recording_error_resets_recording_state(qapp: QApplication, tmp_path: Path) -> None:
     # Keep this focused on UI state; MainWindow's optional multimedia backend may be
     # unavailable in CI, so no real microphone is required.

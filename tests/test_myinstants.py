@@ -12,6 +12,33 @@ from soundmaster.core.myinstants import (
 )
 
 
+def test_empty_query_loads_the_official_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _size: int) -> bytes:
+            return b'<div class="instant"><button onclick="play(\'/media/sounds/airhorn.mp3\')"></button><a href="/en/instant/airhorn/">Airhorn</a></div>'
+
+    requested: list[str] = []
+
+    def fake_urlopen(request, **_kwargs):
+        requested.append(request.full_url)
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    from soundmaster.core.myinstants import search_myinstants
+
+    results = search_myinstants("")
+
+    assert requested == ["https://www.myinstants.com/en/index/us/"]
+    assert [result.title for result in results] == ["Airhorn"]
+
+
 def test_parse_current_myinstants_instant_markup() -> None:
     html = """
     <div class="instant">

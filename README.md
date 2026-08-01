@@ -2,7 +2,7 @@
 
 SoundMaster est une application Windows locale destinée aux joueurs : soundboard, lecture audio hors ligne, génération vocale locale et routage vers un casque ou un câble audio virtuel.
 
-> **État actuel — v0.2.1 : fondation fonctionnelle validée**
+> **État actuel — v0.3.0 : fondation fonctionnelle validée**
 >
 > Cette release fournit le socle PyQt6, le tableau de bord, l’explorateur Myinstants intégré, le cache hors ligne, les paramètres de conformité, les raccourcis Windows et la génération Qwen3-TTS locale optionnelle. Les modèles et les runtimes lourds restent téléchargeables séparément.
 
@@ -13,7 +13,7 @@ SoundMaster est une application Windows locale destinée aux joueurs : soundboar
 - stockage local des paramètres et des journaux ;
 - mode installé et mode portable ;
 - téléchargement de modèles publics Hugging Face sans API d’inférence ;
-- explorateur Myinstants intégré : recherche, test et ajout aux favoris sans ouvrir le site ;
+- explorateur Myinstants intégré : catalogue, recherche et aperçu en direct sans ouvrir le site ; seuls les favoris sont téléchargés pour le mode hors ligne et les raccourcis ;
 - génération vocale locale Qwen3-TTS ou OmniVoice avec transcription automatique facultative ;
 - enregistrement direct d’un échantillon microphone depuis l’écran de clonage ;
 - build Windows automatisé avec PyInstaller et installateur Inno Setup ;
@@ -136,10 +136,10 @@ Build local Windows :
 
 ```powershell
 python -m pip install ".[dev,build]"
-.\packaging\build_windows.ps1 -Version 0.2.1
+.\packaging\build_windows.ps1 -Version 0.3.0
 ```
 
-Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.2.1` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
+Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.3.0` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
 
 ```powershell
 git tag v0.2.0
@@ -172,7 +172,7 @@ La présence d’une référence dans ce dépôt ne constitue pas une garantie d
 
 1. shell PyQt6 français, sidebar et tray ;
 2. routage audio casque / câble virtuel ;
-3. explorateur Myinstants avec cache hors ligne et contrôle des droits ;
+3. explorateur Myinstants avec aperçu en direct, favoris téléchargés pour le cache hors ligne et contrôle des droits ;
 4. moteurs Qwen3-TTS / OmniVoice locaux, enregistrement microphone et historique des générations ;
 5. raccourcis globaux ;
 6. dashboard, favoris et historique.

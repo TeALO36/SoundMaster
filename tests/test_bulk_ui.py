@@ -33,6 +33,61 @@ def _window(tmp_path: Path) -> MainWindow:
     return MainWindow(LegalProfile(), paths.legal_profile, paths, AppConfig())
 
 
+def test_opening_myinstants_page_starts_catalog_load(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = _window(tmp_path)
+    started: list[bool] = []
+    monkeypatch.setattr(window, "_search_myinstants", lambda: started.append(True))
+
+    window._select_page(2)
+
+    assert started == [True]
+    assert window.page_title.text() == "Explorateur Myinstants"
+
+    window._allow_close = True
+    window.close()
+
+
+def test_myinstants_preview_streams_without_creating_a_download_job(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = _window(tmp_path)
+    result = MyInstantResult(
+        "Streamed Airhorn",
+        "https://www.myinstants.com/en/instant/streamed-airhorn/",
+        "https://www.myinstants.com/media/sounds/streamed-airhorn.mp3",
+    )
+    played: list[str] = []
+    monkeypatch.setattr(window, "_play_remote", lambda url, **_kwargs: played.append(url))
+
+    assert window._download_myinstant(result, False) is True
+    assert played == [result.audio_url]
+    assert result.audio_url not in window._download_jobs
+    assert not hasattr(window, "myinstants_rights")
+
+    window._allow_close = True
+    window.close()
+
+
+def test_myinstants_page_can_render_catalog_results(qapp: QApplication, tmp_path: Path) -> None:
+    window = _window(tmp_path)
+    result = MyInstantResult(
+        "Popular Airhorn",
+        "https://www.myinstants.com/en/instant/popular-airhorn/",
+        "https://www.myinstants.com/media/sounds/popular-airhorn.mp3",
+    )
+
+    window._search_finished([result])
+
+    assert window._myinstants_catalog_loaded is True
+    assert window.myinstants_grid.count() == 1
+    assert window._myinstant_cards[result.audio_url].result == result
+
+    window._allow_close = True
+    window.close()
+
+
 def test_myinstants_selection_updates_bulk_action(qapp: QApplication, tmp_path: Path) -> None:
     window = _window(tmp_path)
     result = MyInstantResult(

@@ -195,17 +195,38 @@ QToolTip {
 
 
 def animate_opacity(widget: QWidget, start: float, end: float, duration: int = 260) -> QPropertyAnimation:
-    """Fade a widget without changing layout geometry; keep animation owned by widget."""
+    """Fade a page safely without stacking paint effects or animations.
+
+    Cards intentionally use stylesheet hover states instead of this helper. Page
+    transitions are infrequent, but navigation can still happen before a prior
+    animation finishes; keeping one effect and one animation per widget avoids
+    Qt's painter conflicts and stale effects.
+    """
+
+    previous = getattr(widget, "_soundmaster_animation", None)
+    if isinstance(previous, QPropertyAnimation):
+        previous.stop()
 
     effect = widget.graphicsEffect()
     if not isinstance(effect, QGraphicsOpacityEffect):
         effect = QGraphicsOpacityEffect(widget)
         widget.setGraphicsEffect(effect)
+    effect.setOpacity(start)
+
     animation = QPropertyAnimation(effect, b"opacity", widget)
     animation.setStartValue(start)
     animation.setEndValue(end)
     animation.setDuration(duration)
     animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-    animation.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+
+    def finish() -> None:
+        if getattr(widget, "_soundmaster_animation", None) is animation:
+            effect.setOpacity(end)
+            if end >= 1.0:
+                widget.setGraphicsEffect(None)
+            widget._soundmaster_animation = None  # type: ignore[attr-defined]
+
+    animation.finished.connect(finish)
     widget._soundmaster_animation = animation  # type: ignore[attr-defined]
+    animation.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
     return animation

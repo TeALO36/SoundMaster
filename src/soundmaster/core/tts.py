@@ -9,6 +9,7 @@ lazy-loaded and are never imported at application startup.
 from __future__ import annotations
 
 import gc
+import inspect
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -42,12 +43,13 @@ class QwenVoiceService:
         output_path: Path | None = None,
         language: str = "Auto",
         engine_key: str = "qwen3-tts",
+        settings: dict[str, object] | None = None,
     ) -> Path:
         """Generate a local cloned voice WAV with the selected engine."""
 
         with self._generation_lock:
             return self._generate_clone(
-                text, ref_audio, ref_text, output_path, language, engine_key
+                text, ref_audio, ref_text, output_path, language, engine_key, settings or {}
             )
 
     def _generate_clone(
@@ -58,6 +60,7 @@ class QwenVoiceService:
         output_path: Path | None,
         language: str,
         engine_key: str,
+        settings: dict[str, object],
     ) -> Path:
         text = text.strip()
         ref_text = ref_text.strip()
@@ -84,8 +87,10 @@ class QwenVoiceService:
         model = self._load_engine(local_model, engine_key)
         try:
             if engine_key == "omnivoice":
-                audio, sample_rate = self._generate_omnivoice(
-                    model, text, ref_audio, ref_text
+                audio, sample_rate = (
+                    self._generate_omnivoice(model, text, ref_audio, ref_text, settings)
+                    if settings
+                    else self._generate_omnivoice(model, text, ref_audio, ref_text)
                 )
             else:
                 if not ref_text:
@@ -95,8 +100,10 @@ class QwenVoiceService:
                         "La transcription automatique n’a produit aucun texte. "
                         "Renseignez-la dans Options avancées."
                     )
-                audio, sample_rate = self._generate_qwen(
-                    model, text, ref_audio, ref_text, language
+                audio, sample_rate = (
+                    self._generate_qwen(model, text, ref_audio, ref_text, language, settings)
+                    if settings
+                    else self._generate_qwen(model, text, ref_audio, ref_text, language)
                 )
 
             import soundfile as sf
@@ -118,15 +125,20 @@ class QwenVoiceService:
         ref_audio: Path,
         ref_text: str,
         language: str,
+        settings: dict[str, object] | None = None,
     ) -> tuple[Any, int]:
         import torch
 
         with torch.inference_mode():
-            wavs, sample_rate = model.generate_voice_clone(
-                text=text,
-                language=language or "Auto",
-                ref_audio=str(ref_audio),
-                ref_text=ref_text,
+            kwargs: dict[str, object] = {
+                "text": text,
+                "language": language or "Auto",
+                "ref_audio": str(ref_audio),
+                "ref_text": ref_text,
+            }
+            kwargs.update(settings or {})
+            wavs, sample_rate = QwenVoiceService._call_supported(
+                model.generate_voice_clone, kwargs
             )
         return wavs[0], int(sample_rate)
 
@@ -136,15 +148,29 @@ class QwenVoiceService:
         text: str,
         ref_audio: Path,
         ref_text: str,
+        settings: dict[str, object] | None = None,
     ) -> tuple[Any, int]:
         import torch
 
-        kwargs: dict[str, Any] = {"text": text, "ref_audio": str(ref_audio)}
+        kwargs: dict[str, object] = {"text": text, "ref_audio": str(ref_audio)}
         if ref_text:
             kwargs["ref_text"] = ref_text
+        kwargs.update(settings or {})
         with torch.inference_mode():
-            audio = model.generate(**kwargs)
+            audio = QwenVoiceService._call_supported(model.generate, kwargs)
         return audio[0], 24_000
+
+    @staticmethod
+    def _call_supported(function: Any, kwargs: dict[str, object]) -> Any:
+        """Pass advanced controls only when the installed engine exposes them."""
+
+        try:
+            parameters = inspect.signature(function).parameters
+        except (TypeError, ValueError):
+            return function(**kwargs)
+        if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+            return function(**kwargs)
+        return function(**{key: value for key, value in kwargs.items() if key in parameters})
 
     def _auto_transcribe(self, ref_audio: Path, language: str) -> str:
         try:
