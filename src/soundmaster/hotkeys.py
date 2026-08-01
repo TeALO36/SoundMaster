@@ -1,8 +1,9 @@
-"""Optional Windows global hotkey integration.
+"""Windows global hotkey integration.
 
-The dependency is imported lazily so SoundMaster still starts when the optional
-keyboard package is unavailable. Hook callbacks only emit identifiers; the Qt UI
-owns the actual audio playback and therefore remains on the GUI thread.
+The dependency is imported lazily so SoundMaster can still show a useful startup
+error if a manually copied or incomplete installation is missing it. Hook
+callbacks only emit identifiers; the Qt UI owns the actual audio playback and
+therefore remains on the GUI thread.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class HotkeyManager:
-    """Register configured key combinations through the optional ``keyboard`` package."""
+    """Register configured key combinations through the bundled ``keyboard`` package."""
 
     def __init__(self) -> None:
         self.active = False
@@ -34,8 +35,8 @@ class HotkeyManager:
             import keyboard
         except ImportError as error:
             raise RuntimeError(
-                "Le module optionnel 'keyboard' manque. Installez l’extra Windows : "
-                "python -m pip install 'soundmaster[hotkeys]'"
+                "Le composant Windows des raccourcis manque. "
+                "Relancez setup_env.bat pour réparer l’installation de SoundMaster."
             ) from error
         if not bindings:
             raise RuntimeError("Aucun raccourci enregistré pour un favori.")

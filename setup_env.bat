@@ -64,5 +64,6 @@ echo.
 echo SoundMaster environment is ready.
 echo Run lancer_soundmaster.bat to launch the application.
 echo Run telecharger_modeles.bat to download public Hugging Face models.
+echo Output recording uses Windows WASAPI loopback through sounddevice.
 
 endlocal

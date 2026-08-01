@@ -29,8 +29,15 @@ def _completed_profile() -> LegalProfile:
     return profile
 
 
-def test_new_profile_is_not_commercially_ready() -> None:
-    ready, reasons = LegalProfile().commercial_readiness()
+def test_new_profile_has_safe_technical_defaults_but_is_not_ready() -> None:
+    profile = LegalProfile()
+    assert profile.publisher.country == "France"
+    assert profile.documents.qwen_model_id == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+    assert profile.documents.qwen_notice_reference == ""
+    assert profile.documents.qwen_model_revision == ""
+    assert profile.documents.qwen_model_sha256 == ""
+
+    ready, reasons = profile.commercial_readiness()
 
     assert ready is False
     assert "Nom légal de l’éditeur manquant" in reasons

@@ -24,7 +24,6 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QTabWidget,
-    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -115,18 +114,33 @@ class LegalSettingsWidget(QWidget):
         self.status_label.setWordWrap(True)
         root.addWidget(self.status_label)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.addWidget(self._publisher_group())
-        content_layout.addWidget(self._documents_group())
-        content_layout.addWidget(self._privacy_group())
-        content_layout.addWidget(self._checks_group())
-        content_layout.addWidget(self._sources_group())
-        content_layout.addStretch(1)
-        scroll.setWidget(content)
-        root.addWidget(scroll, 1)
+        # Keep the compliance page compact: the previous single long column
+        # created a scrollbar even when the user only needed one section. Tabs
+        # keep every section reachable without a nested scroll area.
+        tabs = QTabWidget()
+        for title, section, scrollable in (
+            ("Éditeur", self._publisher_group(), False),
+            ("Documents", self._documents_group(), True),
+            ("Données", self._privacy_group(), False),
+            ("Checklist", self._checks_group(), True),
+            ("À vérifier", self._sources_group(), False),
+        ):
+            tab = QWidget()
+            tab_layout = QVBoxLayout(tab)
+            tab_layout.setContentsMargins(0, 0, 0, 0)
+            if scrollable:
+                area = QScrollArea()
+                area.setWidgetResizable(True)
+                area.setFrameShape(QScrollArea.Shape.NoFrame)
+                area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                area.setWidget(section)
+                tab_layout.addWidget(area, 1)
+            else:
+                tab_layout.addWidget(section)
+                tab_layout.addStretch(1)
+            tabs.addTab(tab, title)
+        self.section_tabs = tabs
+        root.addWidget(tabs, 1)
 
         actions = QHBoxLayout()
         self.save_button = QPushButton("Enregistrer la configuration")
@@ -140,7 +154,9 @@ class LegalSettingsWidget(QWidget):
         form = QFormLayout(group)
         for attribute, label in self._PUBLISHER_FIELDS:
             field = QLineEdit(str(getattr(self.profile.publisher, attribute)))
-            field.setPlaceholderText("À compléter par l’éditeur")
+            field.setPlaceholderText(
+                "Ex. SoundMaster SAS — remplacez par les informations officielles"
+            )
             self._publisher_inputs[attribute] = field
             form.addRow(label, field)
         return group
@@ -157,7 +173,18 @@ class LegalSettingsWidget(QWidget):
         form = QFormLayout()
         for attribute, label in self._DOCUMENT_FIELDS:
             field = QLineEdit(str(getattr(self.profile.documents, attribute)))
-            field.setPlaceholderText("https://… ou chemin local vers le document")
+            placeholder = (
+                "À remplacer par la référence exacte vérifiée"
+                if attribute in {
+                    "qwen_license_reference",
+                    "qwen_notice_reference",
+                    "qwen_model_revision",
+                    "qwen_model_sha256",
+                    "third_party_audio_rights_reference",
+                }
+                else "https://… ou chemin local vers le document exact"
+            )
+            field.setPlaceholderText(placeholder)
             self._document_inputs[attribute] = field
             row = QHBoxLayout()
             row.addWidget(field, 1)
@@ -244,23 +271,16 @@ class LegalSettingsWidget(QWidget):
     def _sources_group(self) -> QGroupBox:
         group = QGroupBox("5. Points d’attention obligatoires")
         layout = QVBoxLayout(group)
-        browser = QTextBrowser()
-        browser.setOpenExternalLinks(True)
-        browser.setHtml(
-            "<p><b>Voix :</b> ne clonez ou n’imitez une voix qu’avec une autorisation appropriée. "
-            "Prévoyez un mécanisme de retrait et documentez la conservation.</p>"
-            "<p><b>Myinstants :</b> la licence du site indique un accès personnel et non commercial. "
-            "Ne redistribuez pas ou ne vendez pas de sons téléchargés sans autorisation écrite "
-            "et droits d’auteur vérifiés.</p>"
-            "<p><b>Qwen3-TTS :</b> embarquez la licence et le NOTICE du dépôt/version réellement "
-            "distribué, et conservez les mentions requises.</p>"
-            "<p><b>Vente :</b> faites valider prix, TVA, CGV, garanties légales, rétractation et "
-            "facturation pour chaque marché ciblé.</p>"
-            "<p><b>Mentions légales :</b> affichez l’identité de l’éditeur, l’adresse, les coordonnées "
-            "et les informations d’hébergement conformément aux marchés ciblés.</p>"
+        notes = QLabel(
+            "<b>Voix :</b> autorisation, consentement et procédure de retrait.<br>"
+            "<b>Myinstants :</b> usage commercial interdit sans autorisation écrite et droits des œuvres.<br>"
+            "<b>Qwen3-TTS :</b> licence, NOTICE, révision et checksum doivent correspondre au build.<br>"
+            "<b>Vente :</b> faites valider prix, TVA, CGV, garanties et rétractation pour chaque marché.<br>"
+            "<b>Mentions légales :</b> identité, adresse, contact et hébergeur doivent être exacts."
         )
-        browser.setMinimumHeight(150)
-        layout.addWidget(browser)
+        notes.setWordWrap(True)
+        notes.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(notes)
         return group
 
     def _profile_from_ui(self) -> None:

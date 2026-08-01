@@ -7,7 +7,7 @@ if not exist ".venv\Scripts\python.exe" (
     call setup_env.bat
     if errorlevel 1 goto :failed
 ) else (
-    ".venv\Scripts\python.exe" -c "import PyQt6, soundmaster" >nul 2>&1
+    ".venv\Scripts\python.exe" -c "import PyQt6, keyboard, sounddevice, soundmaster" >nul 2>&1
     if errorlevel 1 (
         echo Dependances manquantes ou environnement incomplet. Reparation...
         call setup_env.bat

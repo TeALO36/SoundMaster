@@ -45,7 +45,7 @@ class VoiceProfile:
 class SoundLibrary:
     """Small, dependency-free repository for local soundboard data."""
 
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
 
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
@@ -80,7 +80,7 @@ class SoundLibrary:
             CREATE TABLE IF NOT EXISTS voice_profiles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
-                sample_path TEXT NOT NULL UNIQUE,
+                sample_path TEXT NOT NULL,
                 ref_text TEXT NOT NULL DEFAULT '',
                 engine_key TEXT NOT NULL DEFAULT 'qwen3-tts',
                 language TEXT NOT NULL DEFAULT 'Auto',
@@ -96,11 +96,58 @@ class SoundLibrary:
                 model TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
-            INSERT INTO schema_meta(key, value) VALUES ('version', '3')
+            INSERT INTO schema_meta(key, value) VALUES ('version', '4')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value;
             """
         )
+        self._migrate_voice_profiles_sample_paths()
+        self._connection.execute(
+            "INSERT INTO schema_meta(key, value) VALUES ('version', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (str(self.SCHEMA_VERSION),),
+        )
         self._connection.commit()
+
+    def _migrate_voice_profiles_sample_paths(self) -> None:
+        """Remove the legacy one-profile-per-sample constraint."""
+
+        unique_sample_index = False
+        for index in self._connection.execute("PRAGMA index_list('voice_profiles')").fetchall():
+            if not bool(index["unique"]):
+                continue
+            columns = self._connection.execute(
+                f"PRAGMA index_info('{str(index['name']).replace(chr(39), chr(39) * 2)}')"
+            ).fetchall()
+            if [str(column["name"]) for column in columns] == ["sample_path"]:
+                unique_sample_index = True
+                break
+        if not unique_sample_index:
+            return
+
+        self._connection.execute("ALTER TABLE voice_profiles RENAME TO voice_profiles_legacy")
+        self._connection.execute(
+            """
+            CREATE TABLE voice_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                sample_path TEXT NOT NULL,
+                ref_text TEXT NOT NULL DEFAULT '',
+                engine_key TEXT NOT NULL DEFAULT 'qwen3-tts',
+                language TEXT NOT NULL DEFAULT 'Auto',
+                settings_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            INSERT INTO voice_profiles
+                (id, name, sample_path, ref_text, engine_key, language, settings_json, created_at)
+            SELECT id, name, sample_path, ref_text, engine_key, language, settings_json, created_at
+            FROM voice_profiles_legacy
+            """
+        )
+        self._connection.execute("DROP TABLE voice_profiles_legacy")
 
     def close(self) -> None:
         self._connection.close()
@@ -156,6 +203,12 @@ class SoundLibrary:
         rows = self._connection.execute("SELECT sound_id, sequence FROM keybinds").fetchall()
         return {int(row["sound_id"]): str(row["sequence"]) for row in rows}
 
+    def clear_keybind(self, sound_id: int) -> None:
+        """Remove the shortcut assigned to one favorite."""
+
+        self._connection.execute("DELETE FROM keybinds WHERE sound_id = ?", (sound_id,))
+        self._connection.commit()
+
     def set_preference(self, key: str, value: str) -> None:
         self._connection.execute(
             "INSERT INTO preferences(key, value) VALUES (?, ?) "
@@ -178,14 +231,10 @@ class SoundLibrary:
         settings: dict[str, object] | None = None,
     ) -> VoiceProfile:
         encoded_settings = json.dumps(settings or {}, ensure_ascii=False, sort_keys=True)
-        self._connection.execute(
+        cursor = self._connection.execute(
             """
             INSERT INTO voice_profiles(name, sample_path, ref_text, engine_key, language, settings_json)
             VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(sample_path) DO UPDATE SET
-                name=excluded.name, ref_text=excluded.ref_text,
-                engine_key=excluded.engine_key, language=excluded.language,
-                settings_json=excluded.settings_json
             """,
             (
                 name.strip() or sample_path.stem,
@@ -198,7 +247,7 @@ class SoundLibrary:
         )
         self._connection.commit()
         row = self._connection.execute(
-            "SELECT * FROM voice_profiles WHERE sample_path = ?", (str(sample_path),)
+            "SELECT * FROM voice_profiles WHERE id = ?", (cursor.lastrowid,)
         ).fetchone()
         assert row is not None
         return self._voice_profile(row)
@@ -224,14 +273,17 @@ class SoundLibrary:
         engine_key: str,
         language: str,
         settings: dict[str, object],
+        sample_path: Path | None = None,
     ) -> VoiceProfile | None:
         self._connection.execute(
             """
-            UPDATE voice_profiles SET name=?, ref_text=?, engine_key=?, language=?, settings_json=?
+            UPDATE voice_profiles SET name=?, sample_path=COALESCE(?, sample_path),
+                ref_text=?, engine_key=?, language=?, settings_json=?
             WHERE id=?
             """,
             (
                 name.strip() or "Voix sans nom",
+                str(sample_path) if sample_path is not None else None,
                 ref_text.strip(),
                 engine_key,
                 language or "Auto",
@@ -255,6 +307,15 @@ class SoundLibrary:
         self._connection.execute("DELETE FROM voice_profiles WHERE id = ?", (profile_id,))
         self._connection.commit()
         return sample_path
+
+    def voice_profile_sample_references(self, sample_path: Path) -> int:
+        """Return how many setups still refer to a sample path."""
+
+        row = self._connection.execute(
+            "SELECT COUNT(*) AS count FROM voice_profiles WHERE sample_path = ?",
+            (str(sample_path),),
+        ).fetchone()
+        return int(row["count"]) if row is not None else 0
 
     def add_voice_generation(
         self, title: str, text: str, sample_path: Path, output_path: Path, model: str

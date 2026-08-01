@@ -19,6 +19,7 @@ class MyInstantCard(QWidget):
     def __init__(self, result: MyInstantResult, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.result = result
+        self._preview_playing = False
         layout = QVBoxLayout(self)
         title = QLabel(f"<b>{result.title}</b>")
         title.setWordWrap(True)
@@ -35,7 +36,7 @@ class MyInstantCard(QWidget):
         self.preview_button = QPushButton("▶ Tester")
         self.preview_button.setToolTip("Lire en direct comme sur Myinstants, sans conserver le fichier")
         self.preview_button.installEventFilter(self)
-        self.preview_button.clicked.connect(lambda: self.preview_requested.emit(self.result))
+        self.preview_button.clicked.connect(self._toggle_preview)
         self.favorite_button = QPushButton("★ Ajouter aux favoris")
         self.favorite_button.setToolTip("Télécharger hors ligne et ajouter au tableau de bord")
         self.favorite_button.clicked.connect(lambda: self.favorite_requested.emit(self.result))
@@ -43,6 +44,20 @@ class MyInstantCard(QWidget):
         actions.addWidget(self.favorite_button, 1)
         layout.addLayout(actions)
         self.setObjectName("myInstantCard")
+
+    def _toggle_preview(self) -> None:
+        """Ask the window to start or stop this card's active preview."""
+
+        self.preview_requested.emit(self.result)
+
+    def set_preview_playing(self, playing: bool) -> None:
+        """Reflect whether this card owns the currently playing preview."""
+
+        self._preview_playing = playing
+        self.preview_button.setText("■ Stop" if playing else "▶ Tester")
+        self.preview_button.setToolTip(
+            "Arrêter la lecture" if playing else "Lire en direct sans télécharger"
+        )
 
     def eventFilter(self, watched, event) -> bool:
         if watched is self.preview_button and event.type() == QEvent.Type.Enter:

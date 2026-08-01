@@ -73,9 +73,11 @@ class LegalDocuments:
     withdrawal_refund_url: str = ""
     data_rights_contact_url: str = ""
     accessibility_statement_url: str = ""
+    # These technical references are safe project defaults; the publisher must
+    # replace the revision/checksum with the exact files shipped in a release.
     qwen_license_reference: str = ""
     qwen_notice_reference: str = ""
-    qwen_model_id: str = ""
+    qwen_model_id: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     qwen_model_revision: str = ""
     qwen_model_sha256: str = ""
     third_party_audio_rights_reference: str = ""

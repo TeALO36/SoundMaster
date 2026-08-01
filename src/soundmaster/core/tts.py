@@ -98,7 +98,7 @@ class QwenVoiceService:
                 if not ref_text:
                     raise VoiceGenerationError(
                         "La transcription automatique n’a produit aucun texte. "
-                        "Renseignez-la dans Options avancées."
+                        "Renseignez-la dans Réglages avancés."
                     )
                 audio, sample_rate = (
                     self._generate_qwen(model, text, ref_audio, ref_text, language, settings)
@@ -179,7 +179,7 @@ class QwenVoiceService:
             raise VoiceGenerationError(
                 "La transcription automatique locale manque. Installez l’extra : "
                 "python -m pip install 'soundmaster[voice-auto]'. "
-                "Ou renseignez une transcription dans Options avancées."
+                "Ou renseignez une transcription dans Réglages avancés."
             ) from error
 
         if self._whisper_model is None:

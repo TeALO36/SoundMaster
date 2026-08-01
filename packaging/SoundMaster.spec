@@ -3,14 +3,19 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 
 ROOT = Path(SPECPATH).resolve().parent
 SRC = ROOT / "src"
 
+sounddevice_datas, sounddevice_binaries, sounddevice_hiddenimports = collect_all("sounddevice")
+
 hiddenimports = [
+    "keyboard",
+    *collect_submodules("keyboard"),
     "soundmaster.__main__",
+    *sounddevice_hiddenimports,
     *collect_submodules("soundmaster.core"),
     *collect_submodules("soundmaster.ui"),
 ]
@@ -18,8 +23,8 @@ hiddenimports = [
 analysis = Analysis(
     [str(SRC / "soundmaster" / "main.py")],
     pathex=[str(SRC)],
-    binaries=[],
-    datas=[],
+    binaries=sounddevice_binaries,
+    datas=sounddevice_datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

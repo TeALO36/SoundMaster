@@ -2,7 +2,7 @@
 
 SoundMaster est une application Windows locale destinée aux joueurs : soundboard, lecture audio hors ligne, génération vocale locale et routage vers un casque ou un câble audio virtuel.
 
-> **État actuel — v0.3.0 : fondation fonctionnelle validée**
+> **État actuel — v0.4.0 : clonage de voix en trois étapes**
 >
 > Cette release fournit le socle PyQt6, le tableau de bord, l’explorateur Myinstants intégré, le cache hors ligne, les paramètres de conformité, les raccourcis Windows et la génération Qwen3-TTS locale optionnelle. Les modèles et les runtimes lourds restent téléchargeables séparément.
 
@@ -14,10 +14,38 @@ SoundMaster est une application Windows locale destinée aux joueurs : soundboar
 - mode installé et mode portable ;
 - téléchargement de modèles publics Hugging Face sans API d’inférence ;
 - explorateur Myinstants intégré : catalogue, recherche et aperçu en direct sans ouvrir le site ; seuls les favoris sont téléchargés pour le mode hors ligne et les raccourcis ;
+- clonage de voix en trois étapes avec écoute intégrée de l’échantillon et du résultat ;
 - génération vocale locale Qwen3-TTS ou OmniVoice avec transcription automatique facultative ;
 - enregistrement direct d’un échantillon microphone depuis l’écran de clonage ;
+- conditions d’utilisation du clonage acceptables et révocables à tout moment depuis les paramètres ;
 - build Windows automatisé avec PyInstaller et installateur Inno Setup ;
 - releases GitHub automatiques sur les tags `vMAJOR.MINOR.PATCH`.
+
+## Cloner une voix
+
+Le menu **Clonage de voix** reste verrouillé tant que ses conditions d’utilisation
+n’ont pas été acceptées dans **Paramètres → Clonage de voix**. Cliquer sur l’entrée
+verrouillée ouvre directement ces conditions, qui rappellent que vous devez disposer
+de l’accord de la personne concernée et que **l’éditeur de SoundMaster n’est pas
+responsable** de l’usage que vous faites de la fonction. Décocher la case reverrouille
+le menu immédiatement.
+
+Une fois déverrouillé, l’écran suit trois étapes :
+
+1. **Choisissez une voix** — sélectionnez une voix existante ou créez-en une nouvelle,
+   puis nommez-la. L’enregistrement de la voix est facultatif pour générer : il sert à
+   la réutiliser plus tard.
+2. **Donnez-lui une voix à imiter** — enregistrez 3 à 10 secondes au micro, capturez la
+   sortie Windows, ou importez un fichier. L’échantillon est **joué automatiquement**
+   dès la fin de l’enregistrement, et reste réécoutable dans le lecteur intégré.
+3. **Écrivez, testez, générez** — le bouton **Tester la voix** génère une phrase courte
+   et la joue immédiatement, pour vérifier le rendu avant de lancer la génération
+   complète. Les tests ne sont jamais ajoutés à l’historique ni aux favoris.
+
+Le résultat s’écoute dans la carte **Résultat**, d’où il peut être ajouté aux favoris ou
+ouvert dans l’explorateur Windows. Un double-clic sur une ligne de l’historique la
+rejoue. Les réglages fins (moteur, langue, température, vitesse, top-p, anti-répétition,
+transcription manuelle, sortie à capturer) restent repliés sous **Réglages avancés**.
 
 ## Installation Windows
 
@@ -39,7 +67,7 @@ setup_env.bat
 lancer_soundmaster.bat
 ```
 
-`setup_env.bat` crée `.venv` et installe les dépendances de développement et de build. Les runtimes vocaux restent optionnels pour éviter un téléchargement de plusieurs Go au premier démarrage. Pour lancer directement l’environnement existant :
+`setup_env.bat` crée `.venv` et installe les dépendances de développement, de build et de raccourcis Windows. Les runtimes vocaux restent optionnels pour éviter un téléchargement de plusieurs Go au premier démarrage. Si une ancienne `.venv` affiche « module keyboard manquant », relancez simplement `setup_env.bat` : l’installation est réparée automatiquement. Pour lancer directement l’environnement existant :
 
 ```bat
 run_soundmaster.bat
@@ -47,7 +75,7 @@ run_soundmaster.bat
 
 ### Activer le clonage vocal accessible
 
-Le champ de transcription n’est pas demandé dans le parcours normal. SoundMaster lance automatiquement une transcription locale de l’échantillon avec Faster-Whisper ; le petit bouton **Options avancées** permet uniquement, si besoin, de saisir une transcription manuelle ou de choisir la langue.
+Le champ de transcription n’est pas demandé dans le parcours normal. SoundMaster lance automatiquement une transcription locale de l’échantillon avec Faster-Whisper ; le petit bouton **Réglages avancés** permet uniquement, si besoin, de saisir une transcription manuelle ou de choisir la langue.
 
 Pour une installation CPU, après `setup_env.bat`, installez les runtimes vocaux dans l’environnement virtuel :
 
@@ -130,16 +158,18 @@ Le mode portable utilise un dossier `data` à côté de l’exécutable. Les dos
 
 Les échantillons vocaux peuvent constituer des données personnelles ou biométriques selon leur usage et la juridiction concernée. Ne fournissez pas la voix d’une autre personne sans autorisation appropriée. Le centre de conformité aide à documenter les décisions de l’éditeur ; il ne constitue ni un avis juridique ni une certification.
 
+La capture de sortie audio utilise le backend Windows WASAPI via `sounddevice`. Si le bouton est inactif ou si la capture échoue, relancez `setup_env.bat`, vérifiez que la sortie sélectionnée est bien un périphérique Windows (casque, haut-parleurs ou câble virtuel), puis réessayez. La première capture peut aussi échouer si aucune sortie WASAPI n’est disponible.
+
 ## Build et releases
 
 Build local Windows :
 
 ```powershell
 python -m pip install ".[dev,build]"
-.\packaging\build_windows.ps1 -Version 0.3.0
+.\packaging\build_windows.ps1 -Version 0.4.0
 ```
 
-Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.3.0` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
+Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.4.0` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
 
 ```powershell
 git tag v0.2.0

@@ -113,4 +113,4 @@ def test_recording_error_resets_recording_state(qapp: QApplication, tmp_path: Pa
     MainWindow._recording_error(paths, None, "microphone failure")
 
     assert paths._recording_path is None
-    assert paths.voice_record_button.text == "● Enregistrer"
+    assert paths.voice_record_button.text == MainWindow._MIC_BUTTON_LABEL
