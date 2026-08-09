@@ -76,6 +76,23 @@ QCheckBox#consentCheck {
     font-weight: 600;
     padding: 4px 0;
 }
+QWidget#consentAction, QWidget#consentActionHighlight {
+    background: #101a13;
+    border: 1px solid #26402f;
+    border-radius: 10px;
+}
+QWidget#consentActionHighlight {
+    border: 2px solid #6ed18a;
+    background: #13251a;
+}
+QLabel#redirectBanner {
+    color: #cdeed7;
+    background: #12241a;
+    border: 1px solid #2c6240;
+    border-left: 4px solid #6ed18a;
+    border-radius: 8px;
+    padding: 10px 12px;
+}
 QWidget#playerBar {
     background: #101711;
     border: 1px solid #24382b;
@@ -450,5 +467,46 @@ def animate_opacity(widget: QWidget, start: float, end: float, duration: int = 2
 
     animation.finished.connect(finish)
     widget._soundmaster_animation = animation  # type: ignore[attr-defined]
+    animation.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+    return animation
+
+
+def pulse_attention(
+    widget: QWidget, loops: int = 3, duration: int = 620
+) -> QPropertyAnimation:
+    """Blink a widget so an automatic redirect is visibly explained.
+
+    Landing on a settings page without a visual cue reads as an unexplained
+    detour, so the row the user was sent to pulses instead of merely being
+    scrolled into view. One effect and one animation per widget, like
+    :func:`animate_opacity`.
+    """
+
+    previous = getattr(widget, "_soundmaster_pulse", None)
+    if isinstance(previous, QPropertyAnimation):
+        previous.stop()
+
+    effect = widget.graphicsEffect()
+    if not isinstance(effect, QGraphicsOpacityEffect):
+        effect = QGraphicsOpacityEffect(widget)
+        widget.setGraphicsEffect(effect)
+    effect.setOpacity(1.0)
+
+    animation = QPropertyAnimation(effect, b"opacity", widget)
+    animation.setDuration(duration)
+    animation.setStartValue(1.0)
+    animation.setKeyValueAt(0.5, 0.3)
+    animation.setEndValue(1.0)
+    animation.setLoopCount(loops)
+    animation.setEasingCurve(QEasingCurve.Type.InOutSine)
+
+    def finish() -> None:
+        if getattr(widget, "_soundmaster_pulse", None) is animation:
+            effect.setOpacity(1.0)
+            widget.setGraphicsEffect(None)
+            widget._soundmaster_pulse = None  # type: ignore[attr-defined]
+
+    animation.finished.connect(finish)
+    widget._soundmaster_pulse = animation  # type: ignore[attr-defined]
     animation.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
     return animation

@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.5.0 — 2026-08-09
+
+### Added
+
+- Kyutai **Pocket TTS** as the default cloning engine: a ~100M-parameter model that runs on the CPU, needs no reference transcript, and skips the local Whisper pass entirely. Available through the new `pocket` extra and the `pocket-tts` model profile.
+- Cloned voice states are cached per sample, so repeated generations from the same recording only pay the cloning cost once; re-recording the sample invalidates the cache.
+- **Paramètres → Mises à jour**: checks the public GitHub releases, compares versions, downloads the asset matching the install mode, and launches the installer. An MSI is preferred over the Inno Setup EXE when both are published; portable installs get the ZIP revealed in Explorer; source checkouts are pointed at `git pull`.
+- Preloaded players for shortcut-bound favorites, so a hotkey pressed mid-game does not pay the media-backend setup cost.
+
+### Changed
+
+- Hovering a sound card preloads it, and replaying the same sound reuses the loaded source. Measured through the app: first click ~161 ms, after hover ~11 ms, repeat ~17 ms.
+- Recording a sample no longer plays it back automatically; it loads into the player and waits for ▶. The same applies to a finished generation. Only "Tester la voix" plays immediately, which is its purpose.
+- The advanced transcript field is disabled and explained when Pocket TTS is selected, since that engine clones straight from the clip.
+
+### Fixed
+
+- The voice-cloning consent redirect now explains itself: a banner states why the settings opened, the checkbox row pulses, and accepting returns to the cloning page instead of expecting a second click on the menu. Withdrawing consent cancels that return.
+- Windows paging-file exhaustion while loading a model (`os error 1455`) is reported as actionable guidance instead of a raw OS error, following the exception's cause chain.
+- The update panel derived the install mode twice and could offer an asset that disagreed with its own message; it is resolved once per check and reset between checks.
+
+### Validation
+
+- 83 automated tests passed, including a local HTTP server exercising the updater's streaming, truncation, cancellation, and error mapping.
+- Ruff and Python compilation passed.
+- The updater was verified against the real public release feed: correct tag, asset choice per install mode, and a real HTTPS asset stream (correct Content-Length, clean cancellation, no partial file left behind).
+- Playback latency measured in the running application before and after the change.
+- Real-window rendering reviewed for the updates tab and the engine list.
+
 ## 0.4.0 — 2026-08-01
 
 ### Added

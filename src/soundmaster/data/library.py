@@ -181,6 +181,38 @@ class SoundLibrary:
         ).fetchall()
         return [self._item(row) for row in rows]
 
+    def recent_sounds(self, limit: int = 8, exclude_favorites: bool = True) -> list[SoundItem]:
+        """Return recently played sounds, newest first.
+
+        Favorites already have their own grid, so by default they are left out
+        instead of being listed twice on the dashboard.
+        """
+
+        clauses = ["last_used_at IS NOT NULL"]
+        if exclude_favorites:
+            clauses.append("favorite = 0")
+        rows = self._connection.execute(
+            f"SELECT * FROM sounds WHERE {' AND '.join(clauses)} "
+            "ORDER BY last_used_at DESC LIMIT ?",
+            (max(0, limit),),
+        ).fetchall()
+        return [self._item(row) for row in rows]
+
+    def rename_sound(self, sound_id: int, title: str) -> SoundItem | None:
+        """Rename one sound, refusing an empty title."""
+
+        clean = title.strip()
+        if not clean:
+            raise ValueError("Le nom ne peut pas être vide.")
+        self._connection.execute(
+            "UPDATE sounds SET title = ? WHERE id = ?", (clean, sound_id)
+        )
+        self._connection.commit()
+        row = self._connection.execute(
+            "SELECT * FROM sounds WHERE id = ?", (sound_id,)
+        ).fetchone()
+        return self._item(row) if row is not None else None
+
     def set_favorite(self, sound_id: int, favorite: bool) -> None:
         self._connection.execute("UPDATE sounds SET favorite = ? WHERE id = ?", (int(favorite), sound_id))
         self._connection.commit()

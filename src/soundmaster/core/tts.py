@@ -17,7 +17,49 @@ from typing import Any
 from soundmaster.core.config import AppPaths
 from soundmaster.core.models import get_profile, model_path
 
-SUPPORTED_ENGINE_KEYS = ("qwen3-tts", "omnivoice")
+SUPPORTED_ENGINE_KEYS = ("pocket-tts", "qwen3-tts", "omnivoice")
+
+# Windows ERROR_COMMITMENT_LIMIT. Loading multi-gigabyte weights commits far more
+# virtual memory than the default paging file allows on many gaming machines.
+_WINDOWS_COMMITMENT_LIMIT = 1455
+_MEMORY_ERROR_MARKERS = (
+    "paging file",
+    "fichier de pagination",
+    "os error 1455",
+    "1455",
+)
+
+OUT_OF_MEMORY_HINT = (
+    "Windows a manqué de mémoire virtuelle pendant le chargement du modèle "
+    "(erreur 1455 : fichier de pagination insuffisant).\n\n"
+    "Essayez, dans cet ordre :\n"
+    "• fermez les applications lourdes (jeux, navigateurs, Discord) puis réessayez ;\n"
+    "• augmentez le fichier d’échange Windows : Paramètres système avancés → "
+    "Performances → Avancé → Mémoire virtuelle → décochez la gestion automatique "
+    "et fixez au moins 24576 Mo sur le disque du modèle ;\n"
+    "• installez le modèle sur un disque disposant de plusieurs dizaines de Go libres ;\n"
+    "• redémarrez Windows pour libérer la mémoire déjà réservée."
+)
+
+
+def _is_out_of_memory(error: BaseException) -> bool:
+    """Detect the Windows paging-file failure behind an opaque loader error."""
+
+    if isinstance(error, MemoryError):
+        return True
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, MemoryError):
+            return True
+        if getattr(current, "winerror", None) == _WINDOWS_COMMITMENT_LIMIT:
+            return True
+        text = str(current).lower()
+        if any(marker in text for marker in _MEMORY_ERROR_MARKERS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 class VoiceGenerationError(RuntimeError):
@@ -27,12 +69,15 @@ class VoiceGenerationError(RuntimeError):
 class QwenVoiceService:
     """Lazy process-local wrapper for the supported local cloning engines."""
 
+    _POCKET_STATE_CACHE_SIZE = 4
+
     def __init__(self, paths: AppPaths) -> None:
         self.paths = paths
         self._model: Any = None
         self._model_path: Path | None = None
         self._engine_key: str | None = None
         self._whisper_model: Any = None
+        self._pocket_states: dict[tuple[str, int, int], Any] = {}
         self._generation_lock = RLock()
 
     def generate_clone(
@@ -78,7 +123,11 @@ class QwenVoiceService:
 
         profile = get_profile(engine_key)
         local_model = model_path(profile, self.paths)
-        if not local_model.is_dir() or not any(local_model.iterdir()):
+        # Pocket TTS ships its own downloader and caches weights itself, so a
+        # missing local snapshot is not an error for that engine.
+        if engine_key != "pocket-tts" and (
+            not local_model.is_dir() or not any(local_model.iterdir())
+        ):
             raise VoiceGenerationError(
                 f"Le modèle {profile.repository} n’est pas présent. "
                 f"Lancez telecharger_modeles.bat {engine_key}."
@@ -86,7 +135,9 @@ class QwenVoiceService:
 
         model = self._load_engine(local_model, engine_key)
         try:
-            if engine_key == "omnivoice":
+            if engine_key == "pocket-tts":
+                audio, sample_rate = self._generate_pocket(model, text, ref_audio, settings)
+            elif engine_key == "omnivoice":
                 audio, sample_rate = (
                     self._generate_omnivoice(model, text, ref_audio, ref_text, settings)
                     if settings
@@ -113,10 +164,77 @@ class QwenVoiceService:
         except VoiceGenerationError:
             raise
         except Exception as error:
+            if _is_out_of_memory(error):
+                self._release_engine()
+                raise VoiceGenerationError(OUT_OF_MEMORY_HINT) from error
             raise VoiceGenerationError(
                 f"Génération {profile.repository} impossible : {error}"
             ) from error
         return output_path
+
+    def _generate_pocket(
+        self,
+        model: Any,
+        text: str,
+        ref_audio: Path,
+        settings: dict[str, object] | None = None,
+    ) -> tuple[Any, int]:
+        """Generate with Kyutai Pocket TTS.
+
+        No reference transcript and no Whisper pass are needed here, which is
+        most of why this engine feels instant compared to the others.
+        """
+
+        state = self._pocket_voice_state(model, ref_audio)
+        kwargs = self._supported_kwargs(model.generate_audio, settings or {})
+        audio = model.generate_audio(state, text, **kwargs)
+        return self._to_samples(audio), int(getattr(model, "sample_rate", 24_000))
+
+    def _pocket_voice_state(self, model: Any, ref_audio: Path) -> Any:
+        """Reuse a cloned voice state instead of re-encoding the sample.
+
+        Cloning the reference clip dominates a Pocket TTS run, so repeated
+        generations from the same sample should only pay for it once. The cache
+        key follows the file's identity, so re-recording a sample invalidates it.
+        """
+
+        try:
+            stat = ref_audio.stat()
+            key = (str(ref_audio.resolve()), int(stat.st_mtime_ns), int(stat.st_size))
+        except OSError:
+            key = (str(ref_audio), 0, 0)
+        cached = self._pocket_states.get(key)
+        if cached is not None:
+            return cached
+        state = model.get_state_for_audio_prompt(str(ref_audio))
+        while len(self._pocket_states) >= self._POCKET_STATE_CACHE_SIZE:
+            self._pocket_states.pop(next(iter(self._pocket_states)))
+        self._pocket_states[key] = state
+        return state
+
+    @staticmethod
+    def _supported_kwargs(function: Any, settings: dict[str, object]) -> dict[str, object]:
+        """Forward advanced controls only when the installed build accepts them."""
+
+        if not settings:
+            return {}
+        try:
+            parameters = inspect.signature(function).parameters
+        except (TypeError, ValueError):
+            return {}
+        if any(item.kind == inspect.Parameter.VAR_KEYWORD for item in parameters.values()):
+            return dict(settings)
+        return {key: value for key, value in settings.items() if key in parameters}
+
+    @staticmethod
+    def _to_samples(audio: Any) -> Any:
+        """Return plain PCM samples from a torch tensor or an array-like."""
+
+        for step in ("detach", "cpu", "numpy"):
+            method = getattr(audio, step, None)
+            if callable(method):
+                audio = method()
+        return audio
 
     @staticmethod
     def _generate_qwen(
@@ -216,6 +334,13 @@ class QwenVoiceService:
         ):
             return self._model
         self._release_engine()
+        if engine_key == "pocket-tts":
+            # Pocket TTS is CPU-first: its own report states GPU gives no gain at
+            # batch size 1, so none of the CUDA/dtype selection below applies.
+            self._model = self._load_pocket_engine(local_model)
+            self._model_path = local_model
+            self._engine_key = engine_key
+            return self._model
         try:
             import torch
         except ImportError as error:
@@ -252,6 +377,9 @@ class QwenVoiceService:
                 "python -m pip install 'soundmaster[tts]'."
             ) from error
         except Exception as error:
+            self._release_engine()
+            if _is_out_of_memory(error):
+                raise VoiceGenerationError(OUT_OF_MEMORY_HINT) from error
             raise VoiceGenerationError(
                 f"Chargement du modèle {engine_key} impossible : {error}"
             ) from error
@@ -259,7 +387,55 @@ class QwenVoiceService:
         self._engine_key = engine_key
         return self._model
 
+    def _load_pocket_engine(self, local_model: Path) -> Any:
+        """Load Pocket TTS, preferring the snapshot managed by SoundMaster."""
+
+        try:
+            from pocket_tts import TTSModel
+        except ImportError as error:
+            raise VoiceGenerationError(
+                "Le runtime pocket-tts manque. Installez l’extra : "
+                "python -m pip install 'soundmaster[pocket]'."
+            ) from error
+        try:
+            return self._load_with_optional_path(TTSModel.load_model, local_model)
+        except VoiceGenerationError:
+            raise
+        except Exception as error:
+            if _is_out_of_memory(error):
+                raise VoiceGenerationError(OUT_OF_MEMORY_HINT) from error
+            raise VoiceGenerationError(
+                f"Chargement de Pocket TTS impossible : {error}"
+            ) from error
+
+    @staticmethod
+    def _load_with_optional_path(loader: Any, local_model: Path) -> Any:
+        """Call a loader with the local snapshot when its signature allows it.
+
+        Pocket TTS downloads and caches its own weights, so pointing it at the
+        managed directory is an optimisation, never a requirement. Loader
+        signatures differ between releases, hence the introspection.
+        """
+
+        if not (local_model.is_dir() and any(local_model.iterdir())):
+            return loader()
+        try:
+            parameters = inspect.signature(loader).parameters
+        except (TypeError, ValueError):
+            return loader()
+        for name in ("model_path", "local_path", "path", "model_dir", "checkpoint_dir"):
+            if name not in parameters:
+                continue
+            try:
+                return loader(**{name: str(local_model)})
+            except Exception:  # noqa: BLE001 - optional third-party boundary.
+                # Fall back to the engine's own resolution rather than failing
+                # because a managed snapshot was incomplete.
+                break
+        return loader()
+
     def _release_engine(self) -> None:
+        self._pocket_states.clear()
         old_model = self._model
         self._model = None
         self._model_path = None

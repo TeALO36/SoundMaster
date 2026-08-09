@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soundmaster"
-version = "0.4.0"
+version = "0.5.0"
 description = "A local-first Windows soundboard for gamers."
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -33,6 +33,12 @@ tts = [
     "omnivoice",
     "soundfile>=0.12,<1",
     "torch>=2.6,<3",
+]
+# Pocket TTS is deliberately its own extra: it is a 100M-parameter CPU model and
+# needs neither CUDA wheels nor the local Whisper pass the other engines use.
+pocket = [
+    "pocket-tts",
+    "soundfile>=0.12,<1",
 ]
 voice-auto = [
     "faster-whisper>=1.1,<2",

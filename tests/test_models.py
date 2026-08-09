@@ -29,8 +29,10 @@ def test_public_model_profiles_have_hugging_face_repositories() -> None:
         "qwen3-tts",
         "qwen3-tts-tokenizer",
         "omnivoice",
+        "pocket-tts",
     }
     assert all("/" in profile.repository for profile in MODEL_PROFILES)
+    assert get_profile("pocket-tts").repository == "kyutai/pocket-tts"
 
 
 def test_model_storage_can_be_overridden_by_environment(monkeypatch, tmp_path: Path) -> None:

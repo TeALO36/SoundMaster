@@ -62,17 +62,23 @@ def test_main_window_builds_offscreen(qapp: QApplication, tmp_path: Path) -> Non
     assert window.voice_advanced_button.isChecked() is False
     assert window.voice_advanced.isVisible() is False
     assert window.voice_advanced.isHidden()
-    assert "facultatif" in window.voice_reference_text.placeholderText().lower()
-    assert window.voice_engine.currentData() == "qwen3-tts"
-    assert window.voice_engine.itemData(1) == "omnivoice"
+    # Pocket TTS leads: it is the fast CPU engine and needs no transcript.
+    assert window.voice_engine.currentData() == "pocket-tts"
+    assert window.voice_engine.itemData(1) == "qwen3-tts"
+    assert window.voice_engine.itemData(2) == "omnivoice"
+    assert window.voice_model.text() == "kyutai/pocket-tts"
+    assert window.voice_reference_text.isEnabled() is False
+    assert "inutile" in window.voice_reference_text.placeholderText().lower()
     assert window.voice_progress.isHidden()
     assert window.search_progress.isHidden()
     assert window.download_group.isHidden()
     assert window.favorite_selected_myinstants.isEnabled() is False
     assert window.bulk_download_progress.isHidden()
     assert window.voice_system_record_button.isEnabled() is True
-    window.voice_engine.setCurrentIndex(1)
+    window.voice_engine.setCurrentIndex(2)
     assert window.voice_model.text() == "k2-fsa/OmniVoice"
+    assert window.voice_reference_text.isEnabled() is True
+    assert "facultatif" in window.voice_reference_text.placeholderText().lower()
     window.voice_advanced_button.click()
     qapp.processEvents()
     qapp.processEvents()
@@ -136,6 +142,79 @@ def test_voice_cloning_is_locked_until_the_user_accepts_the_terms(
     window.close()
 
 
+def test_consent_redirect_explains_itself_and_leads_back(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    paths = _paths(tmp_path)
+    window = MainWindow(LegalProfile(), paths.legal_profile, paths, AppConfig())
+    window.show()
+    qapp.processEvents()
+
+    consent = window.voice_consent
+    assert consent.redirect_banner.isVisible() is False
+    assert consent.open_button.isVisible() is False
+
+    window.nav_buttons[1].click()
+    qapp.processEvents()
+    # The jump is explained, and the exact row to act on is highlighted.
+    assert consent.redirect_banner.isVisible() is True
+    assert consent.action_row.objectName() == "consentActionHighlight"
+    assert window._voice_consent_pending_redirect is True
+
+    consent.accept_box.setChecked(True)
+    qapp.processEvents()
+    # A visible way back exists instead of expecting a second menu click.
+    assert consent.open_button.isVisible() is True
+    window._return_to_voice_after_consent()
+    qapp.processEvents()
+    assert window.pages.currentIndex() == 1
+    assert window._voice_consent_pending_redirect is False
+    assert consent.redirect_banner.isVisible() is False
+
+    window._allow_close = True
+    window.close()
+
+
+def test_consent_return_is_abandoned_if_consent_is_withdrawn_first(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    paths = _paths(tmp_path)
+    window = MainWindow(LegalProfile(), paths.legal_profile, paths, AppConfig())
+    window.show()
+    window.nav_buttons[1].click()
+    window.voice_consent.accept_box.setChecked(True)
+    window.voice_consent.accept_box.setChecked(False)
+    qapp.processEvents()
+
+    # The pending jump must not drop a locked user into the workspace.
+    window._return_to_voice_after_consent()
+    qapp.processEvents()
+    assert window.pages.currentIndex() == 4
+    assert window.voice_stack.currentIndex() == 0
+
+    window._allow_close = True
+    window.close()
+
+
+def test_consent_accepted_without_redirect_does_not_hijack_navigation(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    paths = _paths(tmp_path)
+    window = MainWindow(LegalProfile(), paths.legal_profile, paths, AppConfig())
+    window.show()
+    window._select_settings()
+    window.voice_consent.accept_box.setChecked(True)
+    qapp.processEvents()
+
+    assert window._voice_consent_pending_redirect is False
+    assert window.pages.currentIndex() == 4
+    assert window.voice_consent.redirect_banner.isVisible() is False
+    assert window.voice_consent.open_button.isVisible() is True
+
+    window._allow_close = True
+    window.close()
+
+
 def test_voice_consent_survives_a_restart(qapp: QApplication, tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     first = MainWindow(LegalProfile(), paths.legal_profile, paths, AppConfig())
@@ -163,7 +242,9 @@ def test_recorded_sample_is_immediately_playable(qapp: QApplication, tmp_path: P
     assert window.voice_sample_player.has_source() is True
     assert window.voice_sample_player.source_path() == sample
     assert window.voice_sample_player.play_button.isEnabled() is True
-    assert "écoute" in window.voice_profile_status.text().lower()
+    # Loaded and ready, but never played without the user asking for it.
+    assert window.voice_sample_player.is_playing() is False
+    assert "réécouter" in window.voice_profile_status.text().lower()
 
     window._start_new_voice_profile()
     assert window.voice_sample_player.has_source() is False
@@ -281,6 +362,282 @@ def test_voice_layout_reflows_at_compact_width_without_hiding_actions(
     window.close()
 
 
+def test_recent_sounds_exclude_favorites_and_expose_full_actions(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    paths = _paths(tmp_path)
+    window = MainWindow(LegalProfile(), paths.legal_profile, paths, AppConfig())
+
+    favorite_audio = tmp_path / "favorite.wav"
+    favorite_audio.write_bytes(b"RIFF")
+    played_audio = tmp_path / "played.wav"
+    played_audio.write_bytes(b"RIFF")
+    favorite = window.library.add_sound("Un favori", favorite_audio, favorite=True)
+    played = window.library.add_sound("Déjà joué", played_audio, favorite=False)
+    window.library.record_use(favorite.id)
+    window.library.record_use(played.id)
+    window._refresh_dashboard()
+
+    favorite_titles = {card.item.title for card in window._dashboard_cards}
+    recent_titles = {card.item.title for card in window._recent_cards}
+    assert favorite_titles == {"Un favori"}
+    # A favorite that was just played must not appear twice on the dashboard.
+    assert recent_titles == {"Déjà joué"}
+
+    # Same actions as a Myinstants card: listen, send, re-favorite — plus rename.
+    card = window._recent_cards[0]
+    assert card.preview_button.text() == "▶ Tester"
+    assert card.send_button.text() == "Envoyer"
+    assert card.favorite_button.text() == "☆ Favori"
+    assert card.favorite_button.isChecked() is False
+    assert card.rename_button.text() == "Renommer"
+    assert window._dashboard_cards[0].favorite_button.text() == "★ Favori"
+
+    # Starring a recent sound promotes it into the favorites grid.
+    window._set_favorite(played.id, True)
+    assert {c.item.title for c in window._dashboard_cards} == {"Un favori", "Déjà joué"}
+    assert window._recent_cards == []
+
+    window._allow_close = True
+    window.close()
+
+
+def test_favorites_can_be_renamed(qapp: QApplication, tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    window = MainWindow(LegalProfile(), paths.legal_profile, paths, AppConfig())
+    audio = tmp_path / "rename-me.wav"
+    audio.write_bytes(b"RIFF")
+    sound = window.library.add_sound("Ancien nom", audio, favorite=True)
+
+    renamed = window.library.rename_sound(sound.id, "  Nouveau nom  ")
+    assert renamed is not None
+    assert renamed.title == "Nouveau nom"
+
+    window._refresh_dashboard()
+    assert {card.item.title for card in window._dashboard_cards} == {"Nouveau nom"}
+
+    with pytest.raises(ValueError):
+        window.library.rename_sound(sound.id, "   ")
+
+    window._allow_close = True
+    window.close()
+
+
+def test_favorite_limit_blocks_promoting_another_sound(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    paths = _paths(tmp_path)
+    window = MainWindow(LegalProfile(), paths.legal_profile, paths, AppConfig(favorite_limit=1))
+    first = tmp_path / "first.wav"
+    first.write_bytes(b"RIFF")
+    second = tmp_path / "second.wav"
+    second.write_bytes(b"RIFF")
+    window.library.add_sound("Premier", first, favorite=True)
+    extra = window.library.add_sound("Second", second, favorite=False)
+
+    monkeypatched: list[str] = []
+    from PyQt6.QtWidgets import QMessageBox
+
+    original = QMessageBox.warning
+    QMessageBox.warning = staticmethod(  # type: ignore[method-assign]
+        lambda *args, **kwargs: monkeypatched.append(args[1] if len(args) > 1 else "")
+    )
+    try:
+        window._set_favorite(extra.id, True)
+    finally:
+        QMessageBox.warning = original  # type: ignore[method-assign]
+
+    assert monkeypatched == ["Limite atteinte"]
+    assert len(window.library.sounds(favorites_only=True)) == 1
+
+    window._allow_close = True
+    window.close()
+
+
+class _FakePlayer:
+    """Records what the window asks the media backend to do."""
+
+    def __init__(self) -> None:
+        self.sources: list[str] = []
+        self.plays = 0
+        self.positions: list[int] = []
+        self.state = None
+
+    def setSource(self, url) -> None:
+        self.sources.append(url.toString())
+
+    def setPosition(self, position: int) -> None:
+        self.positions.append(position)
+
+    def play(self) -> None:
+        self.plays += 1
+
+    def stop(self) -> None:
+        return None
+
+    def playbackState(self):
+        from PyQt6.QtMultimedia import QMediaPlayer
+
+        return self.state or QMediaPlayer.PlaybackState.StoppedState
+
+
+def test_replaying_the_same_sound_skips_the_costly_source_reload(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    paths = _paths(tmp_path)
+    window = MainWindow(LegalProfile(), paths.legal_profile, paths, AppConfig())
+    first = tmp_path / "a.wav"
+    first.write_bytes(b"RIFF")
+    second = tmp_path / "b.wav"
+    second.write_bytes(b"RIFF")
+    player = _FakePlayer()
+    window._players[False] = player
+
+    window._play_file(first, False)
+    assert len(player.sources) == 1
+    assert player.plays == 1
+
+    # Same file again: re-resolving it costs ~150 ms, so only seek and play.
+    window._play_file(first, False)
+    assert len(player.sources) == 1
+    assert player.positions == [0]
+    assert player.plays == 2
+
+    # A different file must of course still be loaded.
+    window._play_file(second, False)
+    assert len(player.sources) == 2
+
+    window._allow_close = True
+    window.close()
+
+
+def test_hovering_a_card_preloads_it_but_never_interrupts_playback(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    from PyQt6.QtMultimedia import QMediaPlayer
+
+    paths = _paths(tmp_path)
+    window = MainWindow(LegalProfile(), paths.legal_profile, paths, AppConfig())
+    audio = tmp_path / "hover.wav"
+    audio.write_bytes(b"RIFF")
+    sound = window.library.add_sound("Hover", audio, favorite=True)
+    window._refresh_dashboard()
+    player = _FakePlayer()
+    window._players[False] = player
+
+    window._warm_local_preview(sound.id)
+    assert len(player.sources) == 1
+    # Already warmed: hovering again must not reload it.
+    window._warm_local_preview(sound.id)
+    assert len(player.sources) == 1
+    # And the click itself now only has to play.
+    window._play_file(audio, False)
+    assert len(player.sources) == 1
+    assert player.plays == 1
+
+    # While something is playing, a hover must not steal the player.
+    window._player_sources.clear()
+    player.state = QMediaPlayer.PlaybackState.PlayingState
+    window._warm_local_preview(sound.id)
+    assert len(player.sources) == 1
+
+    # The card wires the hover signal through.
+    card = window._dashboard_cards[0]
+    warmed: list[int] = []
+    card.preview_hovered.connect(warmed.append)
+    card.preview_hovered.emit(sound.id)
+    assert warmed == [sound.id]
+
+    window._allow_close = True
+    window.close()
+
+
+def test_bound_favorites_get_a_preloaded_player_for_instant_shortcuts(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    paths = _paths(tmp_path)
+    window = MainWindow(LegalProfile(), paths.legal_profile, paths, AppConfig())
+    audio = tmp_path / "bound.wav"
+    audio.write_bytes(b"RIFF")
+    other = tmp_path / "unbound.wav"
+    other.write_bytes(b"RIFF")
+    bound = window.library.add_sound("Bound", audio, favorite=True)
+    unbound = window.library.add_sound("Unbound", other, favorite=True)
+    window.library.set_keybind(bound.id, "alt+1")
+
+    window._prepare_hotkey_players()
+    assert set(window._hotkey_players) == {bound.id}
+
+    # The shortcut path uses the preloaded player, not the shared one.
+    shared = _FakePlayer()
+    window._players[True] = shared
+    preloaded = _FakePlayer()
+    window._hotkey_players[bound.id] = (preloaded, object())
+    window._play_sound(bound.id, True)
+    assert preloaded.plays == 1
+    assert preloaded.positions == [0]
+    assert shared.plays == 0
+
+    # A favorite without a binding still goes through the shared player.
+    window._play_sound(unbound.id, True)
+    assert shared.plays == 1
+
+    window._release_hotkey_players()
+    assert window._hotkey_players == {}
+
+    window._allow_close = True
+    window.close()
+
+
+def test_update_panel_matches_the_asset_to_the_install_mode(
+    qapp: QApplication, tmp_path: Path, monkeypatch
+) -> None:
+    """The panel must offer the right file, and never a stale one."""
+
+    import soundmaster.ui.update_settings as panel_module
+    from soundmaster.core.updater import InstallKind, ReleaseAsset, ReleaseInfo
+
+    paths = _paths(tmp_path)
+    window = MainWindow(LegalProfile(), paths.legal_profile, paths, AppConfig())
+    panel = window.update_panel
+    newer = ReleaseInfo(
+        tag="v9.9.9",
+        name="n",
+        notes="n",
+        page_url="https://example.com/r",
+        assets=(
+            ReleaseAsset("SoundMaster-v9.9.9-Setup.exe", "https://e/exe", 43_143_366),
+            ReleaseAsset("SoundMaster-v9.9.9-Portable.zip", "https://e/zip", 60_803_544),
+        ),
+    )
+
+    monkeypatch.setattr(panel_module, "install_kind", lambda: InstallKind.INSTALLER)
+    panel._check_finished(newer)
+    assert panel._asset.name.endswith("Setup.exe")
+
+    monkeypatch.setattr(panel_module, "install_kind", lambda: InstallKind.PORTABLE)
+    panel._check_finished(newer)
+    assert panel._asset.name.endswith("Portable.zip")
+
+    # A source checkout is told to use git, and gets no installer offer.
+    monkeypatch.setattr(panel_module, "install_kind", lambda: InstallKind.SOURCE)
+    panel._check_finished(newer)
+    assert "git pull" in panel.status_label.text()
+    assert panel.install_button.isVisible() is False
+
+    # Already up to date: no asset may stay armed from the previous check.
+    monkeypatch.setattr(panel_module, "install_kind", lambda: InstallKind.INSTALLER)
+    panel._check_finished(
+        ReleaseInfo(tag="v0.0.1", name="old", notes="", page_url="https://e", assets=())
+    )
+    assert panel._asset is None
+    assert panel.install_button.isVisible() is False
+    assert "à jour" in panel.status_label.text()
+
+    window._allow_close = True
+    window.close()
+
+
 def test_shortcut_capture_records_and_cancels(qapp: QApplication) -> None:
     button = ShortcutCaptureButton()
     captured: list[str] = []
@@ -370,7 +727,7 @@ def test_sound_card_tester_toggles_to_stop(qapp: QApplication, tmp_path: Path) -
     card.preview_button.click()
     assert stopped == [sound.id]
     card.set_preview_playing(False)
-    assert card.preview_button.text() == "Tester"
+    assert card.preview_button.text() == "▶ Tester"
 
     window._allow_close = True
     window.close()

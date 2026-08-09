@@ -54,6 +54,14 @@ MODEL_PROFILES: tuple[ModelProfile, ...] = (
         approximate_storage="Plusieurs Go selon les fichiers de la révision",
         license_reference="https://huggingface.co/k2-fsa/OmniVoice",
     ),
+    ModelProfile(
+        key="pocket-tts",
+        repository="kyutai/pocket-tts",
+        directory_name="pocket-tts",
+        purpose="Clonage vocal rapide sur CPU (100M paramètres, Kyutai)",
+        approximate_storage="Quelques centaines de Mo",
+        license_reference="https://huggingface.co/kyutai/pocket-tts",
+    ),
 )
 
 
@@ -141,7 +149,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "models",
         nargs="*",
-        help="Profils à télécharger : qwen3-tts, qwen3-tts-tokenizer ou omnivoice.",
+        help=(
+            "Profils à télécharger : qwen3-tts, qwen3-tts-tokenizer, omnivoice "
+            "ou pocket-tts."
+        ),
     )
     return parser
 

@@ -2,7 +2,7 @@
 
 SoundMaster est une application Windows locale destinée aux joueurs : soundboard, lecture audio hors ligne, génération vocale locale et routage vers un casque ou un câble audio virtuel.
 
-> **État actuel — v0.4.0 : clonage de voix en trois étapes**
+> **État actuel — v0.5.0 : Pocket TTS, latence réduite et mises à jour intégrées**
 >
 > Cette release fournit le socle PyQt6, le tableau de bord, l’explorateur Myinstants intégré, le cache hors ligne, les paramètres de conformité, les raccourcis Windows et la génération Qwen3-TTS locale optionnelle. Les modèles et les runtimes lourds restent téléchargeables séparément.
 
@@ -15,6 +15,9 @@ SoundMaster est une application Windows locale destinée aux joueurs : soundboar
 - téléchargement de modèles publics Hugging Face sans API d’inférence ;
 - explorateur Myinstants intégré : catalogue, recherche et aperçu en direct sans ouvrir le site ; seuls les favoris sont téléchargés pour le mode hors ligne et les raccourcis ;
 - clonage de voix en trois étapes avec écoute intégrée de l’échantillon et du résultat ;
+- moteur **Pocket TTS** (Kyutai) par défaut : génération rapide sur processeur, sans GPU et sans transcription ;
+- lecture quasi instantanée des sons grâce au préchargement au survol et aux lecteurs dédiés aux raccourcis ;
+- vérification et installation des mises à jour depuis les paramètres ;
 - génération vocale locale Qwen3-TTS ou OmniVoice avec transcription automatique facultative ;
 - enregistrement direct d’un échantillon microphone depuis l’écran de clonage ;
 - conditions d’utilisation du clonage acceptables et révocables à tout moment depuis les paramètres ;
@@ -36,8 +39,9 @@ Une fois déverrouillé, l’écran suit trois étapes :
    puis nommez-la. L’enregistrement de la voix est facultatif pour générer : il sert à
    la réutiliser plus tard.
 2. **Donnez-lui une voix à imiter** — enregistrez 3 à 10 secondes au micro, capturez la
-   sortie Windows, ou importez un fichier. L’échantillon est **joué automatiquement**
-   dès la fin de l’enregistrement, et reste réécoutable dans le lecteur intégré.
+   sortie Windows, ou importez un fichier. L’échantillon se charge dans le lecteur
+   intégré : cliquez sur ▶ pour le réécouter autant de fois que nécessaire. Rien
+   n’est joué sans que vous le demandiez.
 3. **Écrivez, testez, générez** — le bouton **Tester la voix** génère une phrase courte
    et la joue immédiatement, pour vérifier le rendu avant de lancer la génération
    complète. Les tests ne sont jamais ajoutés à l’historique ni aux favoris.
@@ -56,7 +60,25 @@ Téléchargez depuis la [release GitHub](https://github.com/TeALO36/SoundMaster/
 - `SoundMaster-v<version>-Setup.exe` pour une installation utilisateur classique ;
 - `SoundMaster-v<version>-Portable.zip` pour lancer l’application sans installation.
 
-L’installateur est un **EXE Inno Setup**, pas un MSI. Un MSI WiX pourra être ajouté plus tard pour les déploiements entreprise.
+L’installateur est un **EXE Inno Setup**, pas un MSI. Un MSI WiX pourra être ajouté plus tard pour les déploiements entreprise ; l’updater intégré le préférera automatiquement à l’EXE dès qu’il sera publié.
+
+### Mettre à jour
+
+**Paramètres → Mises à jour → Vérifier les mises à jour** interroge la liste publique
+des releases GitHub. SoundMaster ne se met jamais à jour tout seul en arrière-plan et
+n’envoie aucune donnée : seule la release la plus récente est lue, et rien n’est
+téléchargé sans confirmation.
+
+Le fichier proposé dépend de la façon dont l’application a été installée :
+
+| Mode | Fichier téléchargé | Comportement |
+| --- | --- | --- |
+| Installation Windows | `.msi` s’il existe, sinon `SoundMaster-v<version>-Setup.exe` | L’installateur est lancé et SoundMaster se ferme pour se laisser remplacer |
+| Portable | `SoundMaster-v<version>-Portable.zip` | L’archive est révélée dans l’explorateur ; remplacez le dossier portable manuellement |
+| Sources | aucun | La page de la release s’ouvre ; mettez à jour avec `git pull` |
+
+Un téléchargement dont la taille ne correspond pas à celle annoncée par GitHub est
+rejeté, et les fichiers servis autrement qu’en HTTPS sont ignorés.
 
 ### Depuis les sources
 
@@ -73,11 +95,17 @@ lancer_soundmaster.bat
 run_soundmaster.bat
 ```
 
-### Activer le clonage vocal accessible
+### Activer le clonage vocal
 
-Le champ de transcription n’est pas demandé dans le parcours normal. SoundMaster lance automatiquement une transcription locale de l’échantillon avec Faster-Whisper ; le petit bouton **Réglages avancés** permet uniquement, si besoin, de saisir une transcription manuelle ou de choisir la langue.
+Le moteur par défaut est **Pocket TTS** (Kyutai) : environ 100 M de paramètres, il tourne sur le processeur, ne demande **aucune transcription**, et son propre rapport indique qu’un GPU ne lui apporte rien à cette taille. C’est le chemin le plus rapide, et il ne demande qu’un seul extra :
 
-Pour une installation CPU, après `setup_env.bat`, installez les runtimes vocaux dans l’environnement virtuel :
+```bat
+.venv\\Scripts\\python -m pip install -e ".[pocket]"
+```
+
+Les moteurs Qwen3-TTS et OmniVoice restent disponibles dans **Réglages avancés** pour une qualité maximale. Ceux-là ont besoin d’une transcription de l’échantillon : SoundMaster la produit automatiquement en local avec Faster-Whisper, et le champ **Transcription** ne sert qu’à la saisir à la main si besoin.
+
+Pour une installation CPU, après `setup_env.bat`, installez ces runtimes plus lourds dans l’environnement virtuel :
 
 ```bat
 .venv\\Scripts\\python -m pip install -e ".[tts,voice-auto]"
@@ -129,6 +157,7 @@ Profils configurés :
 | `qwen3-tts` | [`Qwen/Qwen3-TTS-12Hz-1.7B-Base`](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) | Modèle Qwen3-TTS local |
 | `qwen3-tts-tokenizer` | [`Qwen/Qwen3-TTS-Tokenizer-12Hz`](https://huggingface.co/Qwen/Qwen3-TTS-Tokenizer-12Hz) | Tokenizer audio Qwen3-TTS |
 | `omnivoice` | [`k2-fsa/OmniVoice`](https://huggingface.co/k2-fsa/OmniVoice) | Alternative locale de clonage vocal |
+| `pocket-tts` | [`kyutai/pocket-tts`](https://huggingface.co/kyutai/pocket-tts) | Clonage vocal rapide sur CPU (100 M paramètres) |
 
 Les poids peuvent occuper plusieurs dizaines de Go. Ils ne sont pas inclus dans GitHub Releases et ne sont jamais commités dans ce dépôt. Le modèle Qwen3-TTS déjà utilisé par le test GPU est stocké dans `%LOCALAPPDATA%\\SoundMaster\\models` sur cette machine. Utilisez un autre disque si nécessaire :
 
@@ -166,10 +195,10 @@ Build local Windows :
 
 ```powershell
 python -m pip install ".[dev,build]"
-.\packaging\build_windows.ps1 -Version 0.4.0
+.\packaging\build_windows.ps1 -Version 0.5.0
 ```
 
-Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.4.0` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
+Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.5.0` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
 
 ```powershell
 git tag v0.2.0

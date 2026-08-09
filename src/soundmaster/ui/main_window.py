@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Thread
 from typing import ClassVar
 
-from PyQt6.QtCore import QObject, Qt, QThread, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, Qt, QThread, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QDesktopServices, QKeyEvent, QKeySequence
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -46,7 +47,7 @@ from PyQt6.QtWidgets import (
 from soundmaster.core.audio_capture import SystemAudioRecorder, wasapi_output_devices
 from soundmaster.core.config import AppConfig, AppPaths
 from soundmaster.core.legal import LegalProfile
-from soundmaster.core.models import MODEL_PROFILES, get_profile, is_downloaded
+from soundmaster.core.models import get_profile, is_downloaded
 from soundmaster.core.myinstants import (
     MyInstantResult,
     MyInstantsError,
@@ -60,6 +61,7 @@ from soundmaster.ui.audio_preview import AudioPreviewBar
 from soundmaster.ui.legal_settings import LegalSettingsWidget
 from soundmaster.ui.myinstants_widgets import MyInstantCard
 from soundmaster.ui.theme import APP_STYLE, animate_opacity
+from soundmaster.ui.update_settings import UpdateSettingsPanel
 from soundmaster.ui.voice_consent import CONSENT_PREFERENCE_KEY, VoiceConsentPanel
 
 try:
@@ -228,37 +230,71 @@ class SoundCard(QWidget):
     play_requested = pyqtSignal(int, bool)
     stop_requested = pyqtSignal(int)
     favorite_changed = pyqtSignal(int, bool)
+    rename_requested = pyqtSignal(int)
+    preview_hovered = pyqtSignal(int)
 
     def __init__(self, item: SoundItem, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.item = item
         self._preview_playing = False
         layout = QVBoxLayout(self)
-        title = QLabel(f"<b>{item.title}</b>")
-        title.setWordWrap(True)
-        layout.addWidget(title)
+        self.title_label = QLabel(f"<b>{item.title}</b>")
+        self.title_label.setWordWrap(True)
+        layout.addWidget(self.title_label)
         metadata = QLabel(f"{item.source} · {Path(item.path).name}")
         metadata.setObjectName("muted")
         metadata.setWordWrap(True)
         layout.addWidget(metadata)
-        actions = QHBoxLayout()
-        self.preview_button = QPushButton("Tester")
+        # Two rows of labelled actions: icon-only buttons were unreadable at
+        # this size, and every action here needs to be obvious.
+        primary = QHBoxLayout()
+        primary.setSpacing(6)
+        self.preview_button = QPushButton("▶ Tester")
         self.preview_button.setObjectName("compactButton")
+        self.preview_button.setToolTip("Lire dans le casque")
+        self.preview_button.installEventFilter(self)
         self.preview_button.clicked.connect(self._toggle_preview)
-        send = QPushButton("Envoyer")
-        send.setObjectName("compactButton")
-        send.setToolTip("Lire vers la sortie 2 sélectionnée")
-        send.clicked.connect(lambda: self.play_requested.emit(item.id, True))
-        star = QPushButton("★" if item.favorite else "☆")
-        star.setObjectName("iconButton")
-        star.setCheckable(True)
-        star.setChecked(item.favorite)
-        star.clicked.connect(lambda checked: self.favorite_changed.emit(item.id, checked))
-        actions.addWidget(self.preview_button)
-        actions.addWidget(send)
-        actions.addWidget(star)
-        layout.addLayout(actions)
+        self.send_button = QPushButton("Envoyer")
+        self.send_button.setObjectName("compactButton")
+        self.send_button.setToolTip("Lire vers la sortie 2 sélectionnée")
+        self.send_button.clicked.connect(lambda: self.play_requested.emit(item.id, True))
+        primary.addWidget(self.preview_button, 1)
+        primary.addWidget(self.send_button, 1)
+        layout.addLayout(primary)
+
+        secondary = QHBoxLayout()
+        secondary.setSpacing(6)
+        self.favorite_button = QPushButton()
+        self.favorite_button.setObjectName("compactButton")
+        self.favorite_button.setCheckable(True)
+        self.favorite_button.setChecked(item.favorite)
+        self._apply_favorite_label(item.favorite)
+        self.favorite_button.clicked.connect(self._favorite_clicked)
+        self.rename_button = QPushButton("Renommer")
+        self.rename_button.setObjectName("compactButton")
+        self.rename_button.setToolTip("Changer le nom affiché de ce son")
+        self.rename_button.clicked.connect(lambda: self.rename_requested.emit(item.id))
+        secondary.addWidget(self.favorite_button, 1)
+        secondary.addWidget(self.rename_button, 1)
+        layout.addLayout(secondary)
         self.setObjectName("soundCard")
+
+    def _apply_favorite_label(self, favorite: bool) -> None:
+        self.favorite_button.setText("★ Favori" if favorite else "☆ Favori")
+        self.favorite_button.setToolTip(
+            "Retirer des favoris" if favorite else "Ajouter aux favoris pour un accès hors ligne"
+        )
+
+    def _favorite_clicked(self, checked: bool) -> None:
+        self._apply_favorite_label(checked)
+        self.favorite_changed.emit(self.item.id, checked)
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self.preview_button and event.type() == QEvent.Type.Enter:
+            # Resolve and buffer the file while the pointer is still travelling,
+            # so the click only has to issue play().
+            self.preview_hovered.emit(self.item.id)
+        return super().eventFilter(watched, event)
 
     def _toggle_preview(self) -> None:
         if self._preview_playing:
@@ -268,7 +304,7 @@ class SoundCard(QWidget):
 
     def set_preview_playing(self, playing: bool) -> None:
         self._preview_playing = playing
-        self.preview_button.setText("■ Stop" if playing else "Tester")
+        self.preview_button.setText("■ Stop" if playing else "▶ Tester")
         self.preview_button.setToolTip("Arrêter la lecture" if playing else "Lire dans le casque")
 
 class SearchWorker(QObject):
@@ -424,6 +460,8 @@ class MainWindow(QMainWindow):
         self.library = SoundLibrary(paths.database)
         self.legal_profile, self.legal_profile_path = legal_profile, legal_profile_path
         self._players: dict[bool, object] = {}
+        self._player_sources: dict[bool, str] = {}
+        self._hotkey_players: dict[int, tuple[object, object]] = {}
         self._audio_outputs: dict[bool, object] = {}
         self._network_thread: QThread | None = None
         self._network_worker: QObject | None = None
@@ -453,6 +491,7 @@ class MainWindow(QMainWindow):
         self._myinstants_catalog_loaded = False
         self._myinstant_cards: dict[str, MyInstantCard] = {}
         self._dashboard_cards: list[SoundCard] = []
+        self._recent_cards: list[SoundCard] = []
         self._selected_myinstants: dict[str, MyInstantResult] = {}
         self._bulk_job_ids: set[str] = set()
         self._bulk_total = 0
@@ -462,6 +501,7 @@ class MainWindow(QMainWindow):
         self._voice_generation_ok = False
         self._voice_ui_generation = 0
         self._voice_test_mode = False
+        self._voice_consent_pending_redirect = False
         self._last_generation_path: Path | None = None
         self._last_generation_title = ""
         self._editing_voice_profile_id: int | None = None
@@ -589,15 +629,20 @@ class MainWindow(QMainWindow):
         self.card_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.card_grid.setContentsMargins(0, 0, 0, 0)
         container_layout.addLayout(self.card_grid)
-        container_layout.addWidget(QLabel("Récemment utilisés"))
-        self.recent_list = QListWidget()
-        self.recent_list.setObjectName("recentList")
-        self.recent_list.setMinimumHeight(0)
-        self.recent_list.setMaximumHeight(110)
-        self.recent_list.setSizeAdjustPolicy(
-            QListWidget.SizeAdjustPolicy.AdjustToContents
+        self.recent_header = QLabel("Récemment utilisés")
+        self.recent_header.setObjectName("sectionLabel")
+        container_layout.addWidget(self.recent_header)
+        self.recent_hint = QLabel(
+            "Sons joués récemment qui ne sont pas dans vos favoris. "
+            "★ les ajoute pour les garder hors ligne et leur donner un raccourci."
         )
-        container_layout.addWidget(self.recent_list)
+        self.recent_hint.setObjectName("muted")
+        self.recent_hint.setWordWrap(True)
+        container_layout.addWidget(self.recent_hint)
+        self.recent_grid = QGridLayout()
+        self.recent_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.recent_grid.setContentsMargins(0, 0, 0, 0)
+        container_layout.addLayout(self.recent_grid)
         container_layout.addStretch(1)
         scroll.setWidget(self.card_container)
         layout.addWidget(scroll, 1)
@@ -924,8 +969,13 @@ class MainWindow(QMainWindow):
         advanced_form.setHorizontalSpacing(12)
         advanced_form.setVerticalSpacing(8)
         self.voice_engine = QComboBox()
-        self.voice_engine.addItem("Qwen3-TTS — recommandé", "qwen3-tts")
+        self.voice_engine.addItem("Pocket TTS — rapide, sans GPU (recommandé)", "pocket-tts")
+        self.voice_engine.addItem("Qwen3-TTS — qualité maximale", "qwen3-tts")
         self.voice_engine.addItem("OmniVoice — multilingue", "omnivoice")
+        self.voice_engine.setToolTip(
+            "Pocket TTS génère en quelques secondes sur le processeur et n’a besoin "
+            "d’aucune transcription. Les autres moteurs sont plus lourds."
+        )
         self.voice_engine.currentIndexChanged.connect(self._voice_engine_changed)
         advanced_form.addWidget(QLabel("Moteur vocal"), 0, 0)
         advanced_form.addWidget(self.voice_engine, 0, 1)
@@ -935,7 +985,9 @@ class MainWindow(QMainWindow):
         )
         advanced_form.addWidget(QLabel("Transcription"), 1, 0)
         advanced_form.addWidget(self.voice_reference_text, 1, 1)
-        self.voice_model = QLineEdit(MODEL_PROFILES[0].repository)
+        self.voice_model = QLineEdit(
+            get_profile(str(self.voice_engine.currentData())).repository
+        )
         self.voice_model.setReadOnly(True)
         advanced_form.addWidget(QLabel("Modèle local"), 2, 0)
         advanced_form.addWidget(self.voice_model, 2, 1)
@@ -981,6 +1033,9 @@ class MainWindow(QMainWindow):
         self.voice_advanced.setVisible(False)
         self.voice_advanced_button.toggled.connect(self._set_voice_advanced_visible)
         layout.addWidget(self.voice_advanced)
+        # All engine-dependent widgets exist now, so apply the default engine's
+        # state instead of waiting for the first user change.
+        self._voice_engine_changed(self.voice_engine.currentIndex())
         return container
 
     def _voice_history_card(self) -> QWidget:
@@ -1143,6 +1198,7 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.addTab(self._voice_consent_tab(), "Clonage de voix")
         tabs.addTab(self._audio_settings_tab(), "Audio et système")
+        tabs.addTab(self._updates_tab(), "Mises à jour")
         legal = LegalSettingsWidget(self.legal_profile, self.legal_profile_path, page)
         legal.saved.connect(lambda: self.statusBar().showMessage("Paramètres enregistrés", 5000))
         tabs.addTab(legal, "Conformité éditeur")
@@ -1165,12 +1221,30 @@ class MainWindow(QMainWindow):
         inner_layout.setSpacing(10)
         self.voice_consent = VoiceConsentPanel(self._voice_cloning_accepted())
         self.voice_consent.changed.connect(self._set_voice_cloning_consent)
+        self.voice_consent.open_requested.connect(lambda: self._select_page(1))
         inner_layout.addWidget(self.voice_consent)
         inner_layout.addStretch(1)
         scroll.setWidget(inner)
         self.voice_consent_scroll = scroll
         layout.addWidget(scroll, 1)
         return tab
+
+    def _updates_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(4, 8, 4, 4)
+        self.update_panel = UpdateSettingsPanel(self.paths.audio_cache / "updates")
+        self.update_panel.quit_requested.connect(self._quit_for_update)
+        layout.addWidget(self.update_panel)
+        layout.addStretch(1)
+        return tab
+
+    def _quit_for_update(self) -> None:
+        """Close fully so the installer can replace the running executable."""
+
+        self.statusBar().showMessage("Fermeture de SoundMaster pour la mise à jour…", 4000)
+        self._allow_close = True
+        self.close()
 
     def _audio_settings_tab(self) -> QWidget:
         tab = QWidget()
@@ -1236,16 +1310,39 @@ class MainWindow(QMainWindow):
         self.library.set_preference(CONSENT_PREFERENCE_KEY, str(bool(accepted)).lower())
         self._apply_voice_lock_state()
         if accepted:
-            self.statusBar().showMessage(
-                "Clonage de voix déverrouillé. Vous restez responsable de son usage.", 6000
-            )
+            if self._voice_consent_pending_redirect:
+                # The user only came here because the locked menu sent them.
+                # Take them back instead of leaving them to guess.
+                self.statusBar().showMessage(
+                    "Clonage de voix déverrouillé — ouverture du menu…", 6000
+                )
+                QTimer.singleShot(900, self._return_to_voice_after_consent)
+            else:
+                self.statusBar().showMessage(
+                    "Clonage de voix déverrouillé. Vous restez responsable de son usage.",
+                    6000,
+                )
             return
+        self._voice_consent_pending_redirect = False
+        self.voice_consent.clear_redirect_banner()
         self._stop_voice_players()
         self.statusBar().showMessage(
             "Conditions refusées : le clonage de voix est verrouillé.", 6000
         )
         if self.pages.currentIndex() == 1:
             self._select_settings()
+
+    def _return_to_voice_after_consent(self) -> None:
+        """Complete the round trip, unless consent was withdrawn meanwhile."""
+
+        self._voice_consent_pending_redirect = False
+        self.voice_consent.clear_redirect_banner()
+        if not self._voice_cloning_accepted():
+            return
+        self._select_page(1)
+        self.statusBar().showMessage(
+            "Clonage de voix déverrouillé. Vous restez responsable de son usage.", 6000
+        )
 
     def _apply_voice_lock_state(self) -> None:
         """Reflect the consent state on the navigation entry and the page."""
@@ -1271,18 +1368,22 @@ class MainWindow(QMainWindow):
     def _open_voice_consent_settings(self) -> None:
         """Send the user straight to the terms that unlock the feature."""
 
+        self._voice_consent_pending_redirect = True
         self._select_settings()
         if hasattr(self, "settings_tabs"):
             self.settings_tabs.setCurrentIndex(0)
         if hasattr(self, "voice_consent"):
-            self.voice_consent.flash()
+            # Explain the jump, then pulse the exact row that unlocks the menu.
+            self.voice_consent.flash(redirected=True)
             if hasattr(self, "voice_consent_scroll"):
                 QTimer.singleShot(
                     0,
-                    lambda: self.voice_consent_scroll.ensureWidgetVisible(self.voice_consent),
+                    lambda: self.voice_consent_scroll.ensureWidgetVisible(
+                        self.voice_consent.action_row
+                    ),
                 )
         self.statusBar().showMessage(
-            "Acceptez les conditions du clonage de voix pour déverrouiller le menu.", 8000
+            "Cochez la case surlignée pour déverrouiller le clonage de voix.", 8000
         )
 
     def _stop_voice_players(self) -> None:
@@ -1368,27 +1469,74 @@ class MainWindow(QMainWindow):
     def _preference_bool(self, key: str, default: bool) -> bool:
         return self.library.preference(key, str(default).lower()).lower() in {"1", "true", "yes", "on"}
 
+    def _build_sound_card(self, sound: SoundItem) -> SoundCard:
+        card = SoundCard(sound)
+        card.play_requested.connect(self._play_sound)
+        card.stop_requested.connect(self._stop_sound)
+        card.favorite_changed.connect(self._set_favorite)
+        card.rename_requested.connect(self._rename_sound)
+        card.preview_hovered.connect(self._warm_local_preview)
+        card.set_preview_playing(sound.id == self._active_preview_sound_id)
+        return card
+
     def _refresh_dashboard(self) -> None:
-        while self.card_grid.count():
-            item = self.card_grid.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        for grid in (self.card_grid, self.recent_grid):
+            while grid.count():
+                item = grid.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
         query = self.dashboard_search.text() if hasattr(self, "dashboard_search") else ""
         sounds = self.library.sounds(query, True)
-        self.dashboard_hint.setText(f"{len(sounds)} favori(s) · Tester = casque · Envoyer = sortie 2")
-        self._dashboard_cards = []
-        for sound in sounds:
-            card = SoundCard(sound)
-            card.play_requested.connect(self._play_sound)
-            card.stop_requested.connect(self._stop_sound)
-            card.favorite_changed.connect(self._set_favorite)
-            card.set_preview_playing(sound.id == self._active_preview_sound_id)
-            self._dashboard_cards.append(card)
-        self._reflow_grid(self.card_grid, self._dashboard_cards, self._grid_columns(self.card_container.width()))
-        self.recent_list.clear()
-        for sound in self.library.sounds()[:5]:
-            if sound.last_used_at:
-                self.recent_list.addItem(sound.title)
+        self.dashboard_hint.setText(
+            f"{len(sounds)} favori(s) · Tester = casque · Envoyer = sortie 2"
+        )
+        self._dashboard_cards = [self._build_sound_card(sound) for sound in sounds]
+        self._reflow_grid(
+            self.card_grid,
+            self._dashboard_cards,
+            self._grid_columns(self.card_container.width()),
+        )
+        # Favorites already have their own grid above; listing them again here
+        # would just duplicate every card.
+        recent = self.library.recent_sounds()
+        if query.strip():
+            needle = query.strip().lower()
+            recent = [sound for sound in recent if needle in sound.title.lower()]
+        self._recent_cards = [self._build_sound_card(sound) for sound in recent]
+        self._reflow_grid(
+            self.recent_grid,
+            self._recent_cards,
+            self._grid_columns(self.card_container.width()),
+        )
+        has_recent = bool(self._recent_cards)
+        self.recent_header.setVisible(has_recent)
+        self.recent_hint.setVisible(has_recent)
+
+    def _rename_sound(self, sound_id: int) -> None:
+        """Rename a favorite or a recently used sound in place."""
+
+        matches = [item for item in self.library.sounds() if item.id == sound_id]
+        if not matches:
+            return
+        current = matches[0]
+        new_title, confirmed = QInputDialog.getText(
+            self,
+            "Renommer",
+            "Nouveau nom :",
+            QLineEdit.EchoMode.Normal,
+            current.title,
+        )
+        if not confirmed:
+            return
+        try:
+            self.library.rename_sound(sound_id, new_title)
+        except ValueError as error:
+            self.statusBar().showMessage(str(error), 5000)
+            return
+        self._refresh_dashboard()
+        if self.pages.currentIndex() == 3:
+            self._refresh_keybinds()
+        self.statusBar().showMessage(f"Renommé en « {new_title.strip()} »", 4000)
 
     @staticmethod
     def _grid_columns(available_width: int, card_width: int = 280) -> int:
@@ -1409,11 +1557,9 @@ class MainWindow(QMainWindow):
 
     def _relayout_responsive_grids(self) -> None:
         if hasattr(self, "card_grid"):
-            self._reflow_grid(
-                self.card_grid,
-                self._dashboard_cards,
-                self._grid_columns(self.card_container.width()),
-            )
+            columns = self._grid_columns(self.card_container.width())
+            self._reflow_grid(self.card_grid, self._dashboard_cards, columns)
+            self._reflow_grid(self.recent_grid, self._recent_cards, columns)
         if hasattr(self, "myinstants_grid"):
             self._reflow_grid(
                 self.myinstants_grid,
@@ -1536,6 +1682,8 @@ class MainWindow(QMainWindow):
                     for player in (self.voice_sample_player, self.voice_result_player):
                         player.set_device(device)
         self.library.set_preference("microphone_device", self.microphone_input.currentText())
+        if self._hotkeys.active:
+            self._prepare_hotkey_players()
         self.statusBar().showMessage("Sorties audio enregistrées", 5000)
 
     def _add_local_file(self) -> None:
@@ -1559,9 +1707,35 @@ class MainWindow(QMainWindow):
         if player is None:
             self.statusBar().showMessage("QtMultimedia indisponible", 5000)
             return
-        player.setSource(QUrl.fromLocalFile(str(path)))
+        # Re-resolving a source costs ~90 ms before the backend starts playing,
+        # while replaying an already-loaded one costs about a millisecond.
+        if self._player_sources.get(virtual) != str(path):
+            player.setSource(QUrl.fromLocalFile(str(path)))
+            self._player_sources[virtual] = str(path)
+        else:
+            player.setPosition(0)
         player.play()
         self.statusBar().showMessage("Lecture vers la sortie 2" if virtual else "Lecture locale", 3000)
+
+    def _warm_local_preview(self, sound_id: int) -> None:
+        """Preload a favorite on hover so the click starts playback instantly."""
+
+        player = self._players.get(False)
+        if player is None or QMediaPlayer is None:
+            return
+        if player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
+            return
+        if self._active_remote_preview_url is not None:
+            return
+        matches = [item for item in self.library.sounds() if item.id == sound_id]
+        if not matches:
+            return
+        path = str(Path(matches[0].path))
+        if self._player_sources.get(False) == path:
+            return
+        player.setSource(QUrl.fromLocalFile(path))
+        self._player_sources[False] = path
+        self._remote_preview_url = None
 
     def _local_playback_state_changed(self, state) -> None:
         if QMediaPlayer is None:
@@ -1626,6 +1800,7 @@ class MainWindow(QMainWindow):
         if player is None:
             return
         player.setSource(QUrl(url))
+        self._player_sources[False] = url
         # Do not play on hover: QMediaPlayer will resolve and buffer the source,
         # while the click below only needs to issue play().
 
@@ -1651,6 +1826,7 @@ class MainWindow(QMainWindow):
         if virtual or self._remote_preview_url != url:
             self._remote_preview_url = url
             player.setSource(QUrl(url))
+            self._player_sources[virtual] = url
         player.play()
         if not virtual:
             self._set_active_remote_preview(url)
@@ -1667,11 +1843,66 @@ class MainWindow(QMainWindow):
                 if old_player is not None:
                     old_player.stop()
             self.library.record_use(sound_id)
-            self._play_file(Path(matches[0].path), virtual)
+            # A shortcut fired mid-game has no hover to warm the player, so it
+            # uses the dedicated preloaded one when there is a binding for it.
+            preloaded = self._hotkey_players.get(sound_id) if virtual else None
+            if preloaded is not None:
+                player = preloaded[0]
+                player.setPosition(0)
+                player.play()
+                self.statusBar().showMessage("Lecture vers la sortie 2", 3000)
+            else:
+                self._play_file(Path(matches[0].path), virtual)
             if not virtual:
                 self._set_active_preview(sound_id)
 
+    def _prepare_hotkey_players(self) -> None:
+        """Keep one preloaded player per bound favorite for instant shortcuts.
+
+        Bindings are capped by the favorite limit, so this pool stays small.
+        """
+
+        self._release_hotkey_players()
+        if QMediaPlayer is None or QAudioOutput is None:
+            return
+        device = self.virtual_output.currentData() if hasattr(self, "virtual_output") else None
+        sounds = {item.id: item for item in self.library.sounds("", True)}
+        for sound_id in self.library.keybinds():
+            sound = sounds.get(sound_id)
+            if sound is None or not Path(sound.path).is_file():
+                continue
+            try:
+                output = QAudioOutput(self)
+                if device is not None:
+                    output.setDevice(device)
+                output.setVolume(1.0)
+                player = QMediaPlayer(self)
+                player.setAudioOutput(output)
+                player.setSource(QUrl.fromLocalFile(sound.path))
+            except Exception:  # noqa: BLE001 - optional multimedia backend boundary.
+                self._release_hotkey_players()
+                return
+            self._hotkey_players[sound_id] = (player, output)
+
+    def _release_hotkey_players(self) -> None:
+        # This also runs from closeEvent, so it must never raise on shutdown.
+        for player, output in self._hotkey_players.values():
+            for target, method in ((player, "stop"), (player, "deleteLater"), (output, "deleteLater")):
+                call = getattr(target, method, None)
+                if callable(call):
+                    call()
+        self._hotkey_players.clear()
+
     def _set_favorite(self, sound_id: int, favorite: bool) -> None:
+        if favorite and len(self.library.sounds(favorites_only=True)) >= self.config.favorite_limit:
+            QMessageBox.warning(
+                self,
+                "Limite atteinte",
+                f"Limite de {self.config.favorite_limit} favoris atteinte.",
+            )
+            # Redraw so the star returns to the state actually stored.
+            self._refresh_dashboard()
+            return
         self.library.set_favorite(sound_id, favorite)
         self._refresh_dashboard()
 
@@ -1969,18 +2200,18 @@ class MainWindow(QMainWindow):
             self.voice_capture_output.addItem("Sortie système par défaut", None)
 
     def _register_recorded_sample(self, path: Path, prefix: str) -> None:
-        """Attach a completed recording to the current draft and play it back."""
+        """Attach a completed recording to the current draft, ready to replay."""
 
         if not (path.is_file() and path.stat().st_size > 0):
             self.statusBar().showMessage("Aucun échantillon audio exploitable n’a été créé", 6000)
             return
         self._set_voice_sample(path)
+        # Loaded but never auto-played: the user decides when to listen, which
+        # also avoids a surprise burst through the speakers after a take.
         self.voice_profile_status.setText(
-            f"{prefix} terminé — écoute en cours. Si le rendu vous convient, "
-            "testez la voix à l’étape 3."
+            f"{prefix} terminé. Cliquez sur ▶ pour réécouter votre échantillon, "
+            "puis testez la voix à l’étape 3."
         )
-        # Hearing the take immediately is the whole point of recording in-app.
-        self.voice_sample_player.play()
 
     def _toggle_micro_recording(self) -> None:
         self._toggle_recording()
@@ -2056,9 +2287,17 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Sortie audio enregistrée dans la banque de voix", 5000)
 
     def _voice_engine_changed(self, _index: int) -> None:
-        engine_key = str(self.voice_engine.currentData() or "qwen3-tts")
-        profile = next(profile for profile in MODEL_PROFILES if profile.key == engine_key)
-        self.voice_model.setText(profile.repository)
+        engine_key = str(self.voice_engine.currentData() or "pocket-tts")
+        self.voice_model.setText(get_profile(engine_key).repository)
+        # Pocket TTS clones straight from the clip, so the transcript row is
+        # noise there instead of an escape hatch.
+        needs_transcript = engine_key != "pocket-tts"
+        self.voice_reference_text.setEnabled(needs_transcript)
+        self.voice_reference_text.setPlaceholderText(
+            "Facultatif : transcription exacte de l’échantillon"
+            if needs_transcript
+            else "Inutile avec Pocket TTS : le clonage part directement de l’audio"
+        )
 
     def _setup_recording(self) -> None:
         if QMediaCaptureSession is None or QMediaRecorder is None or QAudioInput is None:
@@ -2292,13 +2531,14 @@ class MainWindow(QMainWindow):
         self._set_last_generation(path, generation.title)
         self._voice_generation_ok = True
         self._refresh_voice_history()
-        self.voice_result_player.play()
 
     def _voice_failed(self, message: str) -> None:
         self._voice_generation_ok = False
         self.voice_progress.setRange(0, 100)
         self.voice_progress.setValue(0)
-        self.voice_status.setText(f"Échec — {message}")
+        # Multi-line guidance belongs in the dialog; the inline status stays short.
+        summary = message.strip().splitlines()[0] if message.strip() else "erreur inconnue"
+        self.voice_status.setText(f"Échec — {summary}")
         QMessageBox.warning(self, "Génération impossible", message)
 
     def _voice_thread_done(self) -> None:
@@ -2319,7 +2559,7 @@ class MainWindow(QMainWindow):
                 "Test terminé — écoutez le rendu ci-dessous. Si la voix vous convient, "
                 "lancez « Générer »."
                 if self._voice_test_mode
-                else "Génération terminée — votre voix est prête dans « Résultat »."
+                else "Génération terminée — cliquez sur ▶ dans « Résultat » pour l’écouter."
             )
         if self._voice_generation_ok:
             QTimer.singleShot(
@@ -2694,6 +2934,7 @@ class MainWindow(QMainWindow):
         sounds = {item.id: item for item in self.library.sounds("", True)}
         try:
             self._hotkeys.start(bindings, self.hotkey_play_requested.emit, sounds)
+            self._prepare_hotkey_players()
             self.hotkey_toggle.setText("Désactiver dans Windows")
         except RuntimeError as error:
             self.hotkey_toggle.setText("Activer dans Windows")
@@ -2703,10 +2944,12 @@ class MainWindow(QMainWindow):
         try:
             if self._hotkeys.active:
                 self._hotkeys.stop()
+                self._release_hotkey_players()
                 self.hotkey_toggle.setText("Activer dans Windows")
                 return
             sounds = {item.id: item for item in self.library.sounds("", True)}
             self._hotkeys.start(self.library.keybinds(), self.hotkey_play_requested.emit, sounds)
+            self._prepare_hotkey_players()
             self.hotkey_toggle.setText("Désactiver dans Windows")
         except RuntimeError as error:
             QMessageBox.warning(self, "Raccourcis indisponibles", str(error))
@@ -2727,7 +2970,10 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self._hotkeys.stop()
+        self._release_hotkey_players()
         self._stop_voice_players()
+        if hasattr(self, "update_panel"):
+            self.update_panel.stop()
         if self._system_recorder is not None:
             self._system_recorder.stop()
         if self._system_recording_thread is not None and self._system_recording_thread.is_alive():
