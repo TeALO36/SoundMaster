@@ -210,8 +210,8 @@ def test_pocket_tts_does_not_require_a_managed_snapshot(
     model = _FakePocketModel()
     loaded: list[object] = []
 
-    def fake_load(local_model, engine_key):
-        loaded.append((local_model, engine_key))
+    def fake_load(local_model, engine_key, load_options=None):
+        loaded.append((local_model, engine_key, load_options))
         return model
 
     monkeypatch.setattr(service, "_load_engine", fake_load)
@@ -224,3 +224,75 @@ def test_pocket_tts_does_not_require_a_managed_snapshot(
     service.generate_clone("Salut", sample, "", tmp_path / "out.wav", "Auto", "pocket-tts")
 
     assert loaded, "the engine must still be loaded"
+
+
+def test_pocket_language_bundles_cover_the_six_published_languages() -> None:
+    from soundmaster.core.tts import POCKET_LANGUAGE_BUNDLES, pocket_language_bundle
+
+    assert set(POCKET_LANGUAGE_BUNDLES) == {
+        "English",
+        "French",
+        "German",
+        "Italian",
+        "Portuguese",
+        "Spanish",
+    }
+    assert pocket_language_bundle("French") == "french"
+    assert pocket_language_bundle("Portuguese") == "portuguese"
+    # Auto and unknown values defer to the engine default instead of forcing English.
+    assert pocket_language_bundle("Auto") is None
+    assert pocket_language_bundle("") is None
+    assert pocket_language_bundle("Klingon") is None
+
+    # Only non-English languages publish a 24-layer bundle.
+    assert pocket_language_bundle("French", True) == "french_24l"
+    assert pocket_language_bundle("Italian", True) == "italian_24l"
+    assert pocket_language_bundle("English", True) == "english"
+
+
+def test_pocket_load_options_carry_language_temperature_and_quantisation() -> None:
+    from soundmaster.core.tts import QwenVoiceService
+
+    options = QwenVoiceService._pocket_load_options(
+        "French",
+        {"temperature": 0.55, "speed": 1.2, "pocket_quantize": True},
+    )
+    assert options == {"language": "french", "temp": 0.55, "quantize": True}
+
+    # Speed and top-p are not load-time arguments and must not leak in.
+    assert "speed" not in options
+
+    hq = QwenVoiceService._pocket_load_options(
+        "Spanish", {"pocket_high_quality": True, "temperature": 0.7}
+    )
+    assert hq["language"] == "spanish_24l"
+
+    assert QwenVoiceService._pocket_load_options("Auto", {}) == {}
+
+
+def test_changing_the_pocket_language_reloads_the_engine(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Language is chosen when the model is built, so it must invalidate it."""
+
+    from soundmaster.core.tts import QwenVoiceService
+
+    service = QwenVoiceService(_paths(tmp_path))
+    built: list[dict] = []
+
+    def fake_pocket(load_options):
+        built.append(dict(load_options))
+        return _FakePocketModel()
+
+    monkeypatch.setattr(service, "_load_pocket_engine", fake_pocket)
+    directory = tmp_path / "pocket"
+
+    service._load_engine(directory, "pocket-tts", {"language": "french"})
+    service._load_engine(directory, "pocket-tts", {"language": "french"})
+    assert len(built) == 1, "identical options must reuse the loaded model"
+
+    service._load_engine(directory, "pocket-tts", {"language": "german"})
+    assert [item["language"] for item in built] == ["french", "german"]
+
+    service._load_engine(directory, "pocket-tts", {"language": "german", "quantize": True})
+    assert len(built) == 3

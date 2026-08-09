@@ -13,7 +13,7 @@ $BuildDir = Join-Path $Root "build"
 $GeneratedVersion = Join-Path $Root "src\soundmaster\_build_version.py"
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = "0.5.0"
+    $Version = "0.5.1"
 }
 $Version = $Version.Trim()
 if ($Version.StartsWith("v")) {

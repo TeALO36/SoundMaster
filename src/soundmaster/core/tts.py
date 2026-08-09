@@ -19,6 +19,35 @@ from soundmaster.core.models import get_profile, model_path
 
 SUPPORTED_ENGINE_KEYS = ("pocket-tts", "qwen3-tts", "omnivoice")
 
+# Pocket TTS ships one bundle per language inside the same repository and picks
+# it through ``load_model(language=...)``. Every non-English language also has a
+# slower 24-layer bundle that trades speed for quality.
+POCKET_LANGUAGE_BUNDLES: dict[str, str] = {
+    "English": "english",
+    "French": "french",
+    "German": "german",
+    "Italian": "italian",
+    "Portuguese": "portuguese",
+    "Spanish": "spanish",
+}
+POCKET_HIGH_QUALITY_SUFFIX = "_24l"
+
+
+def pocket_language_bundle(language: str, high_quality: bool = False) -> str | None:
+    """Map a UI language to a Pocket TTS bundle name.
+
+    ``None`` means "let the engine use its own default", which is what ``Auto``
+    should do rather than forcing English on everyone.
+    """
+
+    bundle = POCKET_LANGUAGE_BUNDLES.get((language or "").strip())
+    if bundle is None:
+        return None
+    # Only non-English bundles publish a 24-layer variant.
+    if high_quality and bundle != "english":
+        return f"{bundle}{POCKET_HIGH_QUALITY_SUFFIX}"
+    return bundle
+
 # Windows ERROR_COMMITMENT_LIMIT. Loading multi-gigabyte weights commits far more
 # virtual memory than the default paging file allows on many gaming machines.
 _WINDOWS_COMMITMENT_LIMIT = 1455
@@ -78,6 +107,7 @@ class QwenVoiceService:
         self._engine_key: str | None = None
         self._whisper_model: Any = None
         self._pocket_states: dict[tuple[str, int, int], Any] = {}
+        self._engine_options: dict[str, object] = {}
         self._generation_lock = RLock()
 
     def generate_clone(
@@ -133,7 +163,12 @@ class QwenVoiceService:
                 f"Lancez telecharger_modeles.bat {engine_key}."
             )
 
-        model = self._load_engine(local_model, engine_key)
+        # Pocket TTS takes its language, temperature and quantisation at load
+        # time, so those belong to the engine identity, not to a generate call.
+        load_options = (
+            self._pocket_load_options(language, settings) if engine_key == "pocket-tts" else {}
+        )
+        model = self._load_engine(local_model, engine_key, load_options)
         try:
             if engine_key == "pocket-tts":
                 audio, sample_rate = self._generate_pocket(model, text, ref_audio, settings)
@@ -171,6 +206,26 @@ class QwenVoiceService:
                 f"Génération {profile.repository} impossible : {error}"
             ) from error
         return output_path
+
+    @staticmethod
+    def _pocket_load_options(
+        language: str, settings: dict[str, object] | None
+    ) -> dict[str, object]:
+        """Collect the Pocket TTS arguments that are fixed at load time."""
+
+        settings = settings or {}
+        options: dict[str, object] = {}
+        bundle = pocket_language_bundle(
+            language, bool(settings.get("pocket_high_quality", False))
+        )
+        if bundle is not None:
+            options["language"] = bundle
+        temperature = settings.get("temperature")
+        if isinstance(temperature, (int, float)):
+            options["temp"] = float(temperature)
+        if settings.get("pocket_quantize"):
+            options["quantize"] = True
+        return options
 
     def _generate_pocket(
         self,
@@ -326,20 +381,30 @@ class QwenVoiceService:
         except Exception as error:
             raise VoiceGenerationError(f"Transcription automatique impossible : {error}") from error
 
-    def _load_engine(self, local_model: Path, engine_key: str) -> Any:
+    def _load_engine(
+        self,
+        local_model: Path,
+        engine_key: str,
+        load_options: dict[str, object] | None = None,
+    ) -> Any:
+        load_options = load_options or {}
         if (
             self._model is not None
             and self._model_path == local_model
             and self._engine_key == engine_key
+            # Language, temperature and quantisation are chosen when the engine
+            # is built, so a change to any of them has to reload it.
+            and self._engine_options == load_options
         ):
             return self._model
         self._release_engine()
         if engine_key == "pocket-tts":
             # Pocket TTS is CPU-first: its own report states GPU gives no gain at
             # batch size 1, so none of the CUDA/dtype selection below applies.
-            self._model = self._load_pocket_engine(local_model)
+            self._model = self._load_pocket_engine(load_options)
             self._model_path = local_model
             self._engine_key = engine_key
+            self._engine_options = dict(load_options)
             return self._model
         try:
             import torch
@@ -387,8 +452,13 @@ class QwenVoiceService:
         self._engine_key = engine_key
         return self._model
 
-    def _load_pocket_engine(self, local_model: Path) -> Any:
-        """Load Pocket TTS, preferring the snapshot managed by SoundMaster."""
+    def _load_pocket_engine(self, load_options: dict[str, object]) -> Any:
+        """Load Pocket TTS with the requested language bundle and options.
+
+        Pocket TTS resolves and caches its own weights, so no model directory is
+        passed here. Options are filtered against the installed signature so an
+        older or newer build never fails on an argument it does not know.
+        """
 
         try:
             from pocket_tts import TTSModel
@@ -397,45 +467,35 @@ class QwenVoiceService:
                 "Le runtime pocket-tts manque. Installez l’extra : "
                 "python -m pip install 'soundmaster[pocket]'."
             ) from error
+        loader = TTSModel.load_model
+        kwargs = self._supported_kwargs(loader, load_options)
         try:
-            return self._load_with_optional_path(TTSModel.load_model, local_model)
+            return loader(**kwargs)
         except VoiceGenerationError:
             raise
         except Exception as error:
             if _is_out_of_memory(error):
                 raise VoiceGenerationError(OUT_OF_MEMORY_HINT) from error
+            language = kwargs.get("language")
+            if language and self._mentions_language(error, str(language)):
+                raise VoiceGenerationError(
+                    f"La langue « {language} » n’est pas disponible pour Pocket TTS "
+                    "dans cette version. Choisissez une autre langue dans les "
+                    "réglages avancés, ou mettez à jour le runtime : "
+                    "python -m pip install -U pocket-tts."
+                ) from error
             raise VoiceGenerationError(
                 f"Chargement de Pocket TTS impossible : {error}"
             ) from error
 
     @staticmethod
-    def _load_with_optional_path(loader: Any, local_model: Path) -> Any:
-        """Call a loader with the local snapshot when its signature allows it.
-
-        Pocket TTS downloads and caches its own weights, so pointing it at the
-        managed directory is an optimisation, never a requirement. Loader
-        signatures differ between releases, hence the introspection.
-        """
-
-        if not (local_model.is_dir() and any(local_model.iterdir())):
-            return loader()
-        try:
-            parameters = inspect.signature(loader).parameters
-        except (TypeError, ValueError):
-            return loader()
-        for name in ("model_path", "local_path", "path", "model_dir", "checkpoint_dir"):
-            if name not in parameters:
-                continue
-            try:
-                return loader(**{name: str(local_model)})
-            except Exception:  # noqa: BLE001 - optional third-party boundary.
-                # Fall back to the engine's own resolution rather than failing
-                # because a managed snapshot was incomplete.
-                break
-        return loader()
+    def _mentions_language(error: BaseException, language: str) -> bool:
+        text = str(error).lower()
+        return language.lower() in text or "language" in text
 
     def _release_engine(self) -> None:
         self._pocket_states.clear()
+        self._engine_options = {}
         old_model = self._model
         self._model = None
         self._model_path = None

@@ -992,42 +992,69 @@ class MainWindow(QMainWindow):
         advanced_form.addWidget(QLabel("Modèle local"), 2, 0)
         advanced_form.addWidget(self.voice_model, 2, 1)
         self.voice_language = QComboBox()
-        self.voice_language.addItems(
-            ("Auto", "French", "English", "German", "Spanish", "Italian")
+        # The visible label is French; the data stays the canonical engine token
+        # so saved voices and the other engines keep working unchanged.
+        for label, token in (
+            ("Auto", "Auto"),
+            ("Français", "French"),
+            ("English", "English"),
+            ("Deutsch", "German"),
+            ("Español", "Spanish"),
+            ("Italiano", "Italian"),
+            ("Português", "Portuguese"),
+        ):
+            self.voice_language.addItem(label, token)
+        self.voice_language.setToolTip(
+            "Pocket TTS possède un modèle par langue : choisissez-la ici, sinon "
+            "le modèle anglais par défaut est utilisé."
         )
         advanced_form.addWidget(QLabel("Langue"), 3, 0)
         advanced_form.addWidget(self.voice_language, 3, 1)
+        self.voice_high_quality = QCheckBox(
+            "Modèle haute qualité (24 couches, plus lent)"
+        )
+        self.voice_high_quality.setToolTip(
+            "Pocket TTS uniquement : variante plus lourde des langues autres que "
+            "l’anglais. Décochez-la pour la génération la plus rapide."
+        )
+        advanced_form.addWidget(self.voice_high_quality, 4, 1)
+        self.voice_quantize = QCheckBox("Génération accélérée (quantification)")
+        self.voice_quantize.setToolTip(
+            "Pocket TTS uniquement : réduit la précision du modèle pour générer "
+            "plus vite, au prix d’une légère perte de qualité."
+        )
+        advanced_form.addWidget(self.voice_quantize, 5, 1)
         self.voice_temperature = QDoubleSpinBox()
         self.voice_temperature.setRange(0.0, 2.0)
         self.voice_temperature.setSingleStep(0.05)
         self.voice_temperature.setValue(0.7)
         self.voice_temperature.setToolTip("Plus haut = plus expressif et plus imprévisible")
-        advanced_form.addWidget(QLabel("Température / émotion"), 4, 0)
-        advanced_form.addWidget(self.voice_temperature, 4, 1)
+        advanced_form.addWidget(QLabel("Température / émotion"), 6, 0)
+        advanced_form.addWidget(self.voice_temperature, 6, 1)
         self.voice_speed = QDoubleSpinBox()
         self.voice_speed.setRange(0.5, 2.0)
         self.voice_speed.setSingleStep(0.05)
         self.voice_speed.setValue(1.0)
-        advanced_form.addWidget(QLabel("Vitesse"), 5, 0)
-        advanced_form.addWidget(self.voice_speed, 5, 1)
+        advanced_form.addWidget(QLabel("Vitesse"), 7, 0)
+        advanced_form.addWidget(self.voice_speed, 7, 1)
         self.voice_top_p = QDoubleSpinBox()
         self.voice_top_p.setRange(0.05, 1.0)
         self.voice_top_p.setSingleStep(0.05)
         self.voice_top_p.setValue(0.9)
-        advanced_form.addWidget(QLabel("Top-p"), 6, 0)
-        advanced_form.addWidget(self.voice_top_p, 6, 1)
+        advanced_form.addWidget(QLabel("Top-p"), 8, 0)
+        advanced_form.addWidget(self.voice_top_p, 8, 1)
         self.voice_repetition_penalty = QDoubleSpinBox()
         self.voice_repetition_penalty.setRange(0.5, 2.0)
         self.voice_repetition_penalty.setSingleStep(0.05)
         self.voice_repetition_penalty.setValue(1.05)
-        advanced_form.addWidget(QLabel("Anti-répétition"), 7, 0)
-        advanced_form.addWidget(self.voice_repetition_penalty, 7, 1)
+        advanced_form.addWidget(QLabel("Anti-répétition"), 9, 0)
+        advanced_form.addWidget(self.voice_repetition_penalty, 9, 1)
         self.voice_capture_output = QComboBox()
         self._populate_voice_capture_outputs()
-        advanced_form.addWidget(QLabel("Sortie à capturer"), 8, 0)
-        advanced_form.addWidget(self.voice_capture_output, 8, 1)
-        advanced_form.addWidget(QLabel("Fichier de l’échantillon"), 9, 0)
-        advanced_form.addWidget(self.voice_sample, 9, 1)
+        advanced_form.addWidget(QLabel("Sortie à capturer"), 10, 0)
+        advanced_form.addWidget(self.voice_capture_output, 10, 1)
+        advanced_form.addWidget(QLabel("Fichier de l’échantillon"), 11, 0)
+        advanced_form.addWidget(self.voice_sample, 11, 1)
         advanced_form.setColumnStretch(1, 1)
         self.voice_advanced.setObjectName("voiceAdvanced")
         self.voice_advanced.setVisible(False)
@@ -1914,7 +1941,14 @@ class MainWindow(QMainWindow):
             "speed": self.voice_speed.value(),
             "top_p": self.voice_top_p.value(),
             "repetition_penalty": self.voice_repetition_penalty.value(),
+            "pocket_high_quality": self.voice_high_quality.isChecked(),
+            "pocket_quantize": self.voice_quantize.isChecked(),
         }
+
+    def _voice_language(self) -> str:
+        """Return the canonical engine token, not the translated label."""
+
+        return str(self.voice_language.currentData() or "Auto")
 
     def _set_voice_advanced_visible(self, visible: bool) -> None:
         """Show the advanced form and make it reachable inside the details scroll area."""
@@ -1966,7 +2000,10 @@ class MainWindow(QMainWindow):
         engine_index = self.voice_engine.findData(profile.engine_key)
         if engine_index >= 0:
             self.voice_engine.setCurrentIndex(engine_index)
-        language_index = self.voice_language.findText(profile.language)
+        language_index = self.voice_language.findData(profile.language)
+        if language_index < 0:
+            # Voices saved before the labels were translated stored the label.
+            language_index = self.voice_language.findText(profile.language)
         if language_index >= 0:
             self.voice_language.setCurrentIndex(language_index)
         settings = profile.settings
@@ -1979,6 +2016,11 @@ class MainWindow(QMainWindow):
             value = settings.get(key)
             if isinstance(value, (int, float)):
                 widget.setValue(float(value))
+        for checkbox, key in (
+            (self.voice_high_quality, "pocket_high_quality"),
+            (self.voice_quantize, "pocket_quantize"),
+        ):
+            checkbox.setChecked(bool(settings.get(key, False)))
         capture_output = settings.get("capture_output")
         capture_index = self.voice_capture_output.findData(capture_output)
         if capture_index < 0 and isinstance(capture_output, str):
@@ -2023,7 +2065,9 @@ class MainWindow(QMainWindow):
         self._set_voice_sample(None)
         self.voice_reference_text.clear()
         self.voice_engine.setCurrentIndex(0)
-        self.voice_language.setCurrentText("Auto")
+        self.voice_language.setCurrentIndex(max(0, self.voice_language.findData("Auto")))
+        self.voice_high_quality.setChecked(False)
+        self.voice_quantize.setChecked(False)
         self.voice_temperature.setValue(0.7)
         self.voice_speed.setValue(1.0)
         self.voice_top_p.setValue(0.9)
@@ -2110,8 +2154,8 @@ class MainWindow(QMainWindow):
             **self._voice_settings(),
             "capture_output": self.voice_capture_output.currentData(),
         }
-        engine_key = str(self.voice_engine.currentData() or "qwen3-tts")
-        language = self.voice_language.currentText()
+        engine_key = str(self.voice_engine.currentData() or "pocket-tts")
+        language = self._voice_language()
         if self._editing_voice_profile_id is None:
             profile = self.library.add_voice_profile(
                 name,
@@ -2291,12 +2335,22 @@ class MainWindow(QMainWindow):
         self.voice_model.setText(get_profile(engine_key).repository)
         # Pocket TTS clones straight from the clip, so the transcript row is
         # noise there instead of an escape hatch.
-        needs_transcript = engine_key != "pocket-tts"
-        self.voice_reference_text.setEnabled(needs_transcript)
+        is_pocket = engine_key == "pocket-tts"
+        self.voice_reference_text.setEnabled(not is_pocket)
         self.voice_reference_text.setPlaceholderText(
-            "Facultatif : transcription exacte de l’échantillon"
-            if needs_transcript
-            else "Inutile avec Pocket TTS : le clonage part directement de l’audio"
+            "Inutile avec Pocket TTS : le clonage part directement de l’audio"
+            if is_pocket
+            else "Facultatif : transcription exacte de l’échantillon"
+        )
+        # These two only exist in Pocket TTS, and only it reloads on a change.
+        for checkbox in (self.voice_high_quality, self.voice_quantize):
+            checkbox.setVisible(is_pocket)
+            checkbox.setEnabled(is_pocket)
+        self.voice_language.setToolTip(
+            "Pocket TTS possède un modèle par langue : choisissez-la ici, sinon "
+            "le modèle anglais par défaut est utilisé."
+            if is_pocket
+            else "Langue passée au moteur pour la génération et la transcription."
         )
 
     def _setup_recording(self) -> None:
@@ -2433,7 +2487,7 @@ class MainWindow(QMainWindow):
             sample,
             ref_text,
             output,
-            self.voice_language.currentText(),
+            self._voice_language(),
             self._active_voice_engine,
             self.voice_model.text(),
             settings,

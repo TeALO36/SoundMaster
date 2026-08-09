@@ -882,3 +882,68 @@ def test_legal_settings_panel_builds_offscreen(qapp: QApplication, tmp_path: Pat
     assert widget._document_inputs["qwen_notice_reference"].text() == ""
 
     window.close()
+
+
+def test_language_choice_offers_every_pocket_bundle_and_survives_a_save(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    from soundmaster.core.tts import POCKET_LANGUAGE_BUNDLES, pocket_language_bundle
+
+    window = _unlocked_window(tmp_path)
+    tokens = [
+        window.voice_language.itemData(index)
+        for index in range(window.voice_language.count())
+    ]
+    assert tokens[0] == "Auto"
+    # Every published Pocket TTS language must be reachable from the UI.
+    assert set(POCKET_LANGUAGE_BUNDLES).issubset(set(tokens))
+    for token in tokens[1:]:
+        assert pocket_language_bundle(token) is not None
+
+    sample = tmp_path / "sample.wav"
+    sample.write_bytes(b"RIFF")
+    window._start_new_voice_profile()
+    window.voice_profile_name.setText("Voix française")
+    window.voice_sample.setText(str(sample))
+    window.voice_language.setCurrentIndex(window.voice_language.findData("French"))
+    window.voice_high_quality.setChecked(True)
+    window._save_voice_profile()
+
+    profile = window.library.voice_profiles()[0]
+    # The canonical token is stored, not the translated label.
+    assert profile.language == "French"
+    assert profile.settings["pocket_high_quality"] is True
+    assert pocket_language_bundle(profile.language, True) == "french_24l"
+
+    # Reloading the saved voice must restore both, whatever the editor shows.
+    window.voice_language.setCurrentIndex(0)
+    window.voice_high_quality.setChecked(False)
+    window._voice_profile_changed(window.voice_profile_combo.currentIndex())
+    assert window._voice_language() == "French"
+    assert window.voice_high_quality.isChecked() is True
+
+    window._allow_close = True
+    window.close()
+
+
+def test_pocket_only_controls_hide_for_the_other_engines(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    window = _unlocked_window(tmp_path)
+    window.show()
+    window._select_page(1)
+    window.voice_advanced_button.setChecked(True)
+    qapp.processEvents()
+
+    assert window.voice_engine.currentData() == "pocket-tts"
+    assert window.voice_high_quality.isVisibleTo(window) is True
+    assert window.voice_quantize.isVisibleTo(window) is True
+
+    window.voice_engine.setCurrentIndex(window.voice_engine.findData("qwen3-tts"))
+    qapp.processEvents()
+    assert window.voice_high_quality.isVisibleTo(window) is False
+    assert window.voice_quantize.isVisibleTo(window) is False
+    assert window.voice_reference_text.isEnabled() is True
+
+    window._allow_close = True
+    window.close()

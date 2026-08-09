@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.5.1 — 2026-08-09
+
+### Fixed
+
+- Pocket TTS ignored the selected language. It publishes one bundle per language inside the same repository and picks it through `load_model(language=...)`, so every generation silently used the default English model. All six published languages — English, French, German, Italian, Portuguese, Spanish — are now reachable from the language selector.
+- The advanced temperature setting never reached Pocket TTS either: it is a load-time argument (`temp`), not a generate-time one. Language, temperature and quantisation are now part of the engine identity, so changing any of them reloads the model instead of reusing a mismatched one.
+- Removed a model-path argument probe that could never match: `load_model` takes no model directory, and its `config` parameter is a config file rather than a snapshot.
+
+### Added
+
+- **Modèle haute qualité** toggle, selecting the slower 24-layer bundle published for every non-English language.
+- **Génération accélérée** toggle, enabling Pocket TTS quantisation for faster generation.
+- Portuguese in the language selector, and French labels for the existing entries. The canonical engine token is what gets stored, so saved voices and the other engines are unaffected.
+- A clearer error when a requested language bundle is unavailable in the installed runtime.
+
+### Validation
+
+- 88 automated tests passed, including bundle mapping, load-option assembly, and engine reload on a language change.
+- Ruff and Python compilation passed.
+- Language-to-bundle mapping verified through the running UI for every entry, with and without the high-quality variant.
+
 ## 0.5.0 — 2026-08-09
 
 ### Added

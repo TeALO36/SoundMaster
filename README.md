@@ -2,7 +2,7 @@
 
 SoundMaster est une application Windows locale destinée aux joueurs : soundboard, lecture audio hors ligne, génération vocale locale et routage vers un casque ou un câble audio virtuel.
 
-> **État actuel — v0.5.0 : Pocket TTS, latence réduite et mises à jour intégrées**
+> **État actuel — v0.5.1 : Pocket TTS multilingue, latence réduite et mises à jour intégrées**
 >
 > Cette release fournit le socle PyQt6, le tableau de bord, l’explorateur Myinstants intégré, le cache hors ligne, les paramètres de conformité, les raccourcis Windows et la génération Qwen3-TTS locale optionnelle. Les modèles et les runtimes lourds restent téléchargeables séparément.
 
@@ -15,7 +15,7 @@ SoundMaster est une application Windows locale destinée aux joueurs : soundboar
 - téléchargement de modèles publics Hugging Face sans API d’inférence ;
 - explorateur Myinstants intégré : catalogue, recherche et aperçu en direct sans ouvrir le site ; seuls les favoris sont téléchargés pour le mode hors ligne et les raccourcis ;
 - clonage de voix en trois étapes avec écoute intégrée de l’échantillon et du résultat ;
-- moteur **Pocket TTS** (Kyutai) par défaut : génération rapide sur processeur, sans GPU et sans transcription ;
+- moteur **Pocket TTS** (Kyutai) par défaut : génération rapide sur processeur, sans GPU et sans transcription, en 6 langues ;
 - lecture quasi instantanée des sons grâce au préchargement au survol et aux lecteurs dédiés aux raccourcis ;
 - vérification et installation des mises à jour depuis les paramètres ;
 - génération vocale locale Qwen3-TTS ou OmniVoice avec transcription automatique facultative ;
@@ -102,6 +102,14 @@ Le moteur par défaut est **Pocket TTS** (Kyutai) : environ 100 M de paramètres
 ```bat
 .venv\\Scripts\\python -m pip install -e ".[pocket]"
 ```
+
+Pocket TTS publie **un modèle par langue** : anglais, français, allemand, espagnol,
+italien et portugais. Choisissez-la dans **Réglages avancés → Langue** ; `Auto` laisse
+le moteur utiliser son modèle par défaut (anglais). Chaque langue autre que l’anglais
+possède aussi une variante 24 couches, plus lente et de meilleure qualité, activable
+par la case **Modèle haute qualité**. La case **Génération accélérée** active la
+quantification du modèle pour aller plus vite au prix d’un peu de qualité. Ces trois
+réglages sont fixés au chargement du moteur : en changer un le recharge.
 
 Les moteurs Qwen3-TTS et OmniVoice restent disponibles dans **Réglages avancés** pour une qualité maximale. Ceux-là ont besoin d’une transcription de l’échantillon : SoundMaster la produit automatiquement en local avec Faster-Whisper, et le champ **Transcription** ne sert qu’à la saisir à la main si besoin.
 
@@ -195,10 +203,10 @@ Build local Windows :
 
 ```powershell
 python -m pip install ".[dev,build]"
-.\packaging\build_windows.ps1 -Version 0.5.0
+.\packaging\build_windows.ps1 -Version 0.5.1
 ```
 
-Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.5.0` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
+Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.5.1` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
 
 ```powershell
 git tag v0.2.0
