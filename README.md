@@ -2,7 +2,7 @@
 
 SoundMaster est une application Windows locale destinée aux joueurs : soundboard, lecture audio hors ligne, génération vocale locale et routage vers un casque ou un câble audio virtuel.
 
-> **État actuel — v0.5.1 : Pocket TTS multilingue, latence réduite et mises à jour intégrées**
+> **État actuel — v0.5.2 : clonage Pocket TTS validé de bout en bout, latence réduite et mises à jour intégrées**
 >
 > Cette release fournit le socle PyQt6, le tableau de bord, l’explorateur Myinstants intégré, le cache hors ligne, les paramètres de conformité, les raccourcis Windows et la génération Qwen3-TTS locale optionnelle. Les modèles et les runtimes lourds restent téléchargeables séparément.
 
@@ -97,19 +97,56 @@ run_soundmaster.bat
 
 ### Activer le clonage vocal
 
-Le moteur par défaut est **Pocket TTS** (Kyutai) : environ 100 M de paramètres, il tourne sur le processeur, ne demande **aucune transcription**, et son propre rapport indique qu’un GPU ne lui apporte rien à cette taille. C’est le chemin le plus rapide, et il ne demande qu’un seul extra :
+Le moteur par défaut est **Pocket TTS** (Kyutai) : environ 100 M de paramètres, il tourne sur le processeur et ne demande **aucune transcription**. C’est le chemin le plus rapide, et il ne demande qu’un seul extra :
 
 ```bat
 .venv\\Scripts\\python -m pip install -e ".[pocket]"
 ```
 
+#### Autoriser le clonage (obligatoire une seule fois)
+
+Les poids capables d’**imiter votre échantillon** sont dans un dépôt Hugging Face à
+accès contrôlé. Sans cette autorisation, Pocket TTS se rabat silencieusement sur une
+version qui ne sait lire que son propre catalogue de voix, et le clonage échoue.
+Une seule fois :
+
+1. ouvrez [huggingface.co/kyutai/pocket-tts](https://huggingface.co/kyutai/pocket-tts)
+   et acceptez les conditions du modèle (compte gratuit) ;
+2. créez un jeton d’accès en lecture sur
+   [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) ;
+3. connectez-vous localement :
+
+```bat
+.venv\\Scripts\\python -m huggingface_hub.commands.huggingface_cli login
+```
+
+Si cette étape manque, SoundMaster affiche ces instructions au lieu d’une erreur brute.
+
+#### Langues et vitesse
+
 Pocket TTS publie **un modèle par langue** : anglais, français, allemand, espagnol,
-italien et portugais. Choisissez-la dans **Réglages avancés → Langue** ; `Auto` laisse
-le moteur utiliser son modèle par défaut (anglais). Chaque langue autre que l’anglais
-possède aussi une variante 24 couches, plus lente et de meilleure qualité, activable
-par la case **Modèle haute qualité**. La case **Génération accélérée** active la
-quantification du modèle pour aller plus vite au prix d’un peu de qualité. Ces trois
-réglages sont fixés au chargement du moteur : en changer un le recharge.
+italien et portugais. Choisissez-la dans **Réglages avancés → Langue**. Attention, les
+variantes ne sont pas uniformes : **le français n’existe qu’en modèle 24 couches**
+(la case *Modèle haute qualité* est donc sans effet et grisée), tandis que l’anglais
+n’a pas de variante 24 couches. Allemand, espagnol, italien et portugais ont les deux.
+
+SoundMaster choisit automatiquement le chemin le plus rapide disponible. Mesures
+réelles sur ce projet (RTX 4050, modèle français 24 couches, ~8 s de parole générée) :
+
+| Configuration | Durée de génération |
+| --- | --- |
+| Processeur seul | 11,5 s |
+| Processeur + quantification | 9,6 s |
+| **Carte graphique (choisie automatiquement)** | **8,8 s** |
+
+La case **Génération accélérée** n’a donc d’effet que sur une machine sans GPU : avec
+une carte graphique, elle est ignorée, car un modèle quantifié ne peut pas s’exécuter
+sur le GPU et serait plus lent. Langue, température et quantification sont fixées au
+chargement du moteur : en changer une le recharge (quelques secondes).
+
+Une fois le moteur et la voix en mémoire, une génération coûte environ **le temps réel
+de l’audio produit** (7 s de parole en ~7 s), et regénérer avec la même voix ne
+recharge rien.
 
 Les moteurs Qwen3-TTS et OmniVoice restent disponibles dans **Réglages avancés** pour une qualité maximale. Ceux-là ont besoin d’une transcription de l’échantillon : SoundMaster la produit automatiquement en local avec Faster-Whisper, et le champ **Transcription** ne sert qu’à la saisir à la main si besoin.
 
@@ -203,10 +240,10 @@ Build local Windows :
 
 ```powershell
 python -m pip install ".[dev,build]"
-.\packaging\build_windows.ps1 -Version 0.5.1
+.\packaging\build_windows.ps1 -Version 0.5.2
 ```
 
-Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.5.1` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
+Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.5.2` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
 
 ```powershell
 git tag v0.2.0

@@ -237,27 +237,44 @@ def test_pocket_language_bundles_cover_the_six_published_languages() -> None:
         "Portuguese",
         "Spanish",
     }
-    assert pocket_language_bundle("French") == "french"
-    assert pocket_language_bundle("Portuguese") == "portuguese"
-    # Auto and unknown values defer to the engine default instead of forcing English.
-    assert pocket_language_bundle("Auto") is None
-    assert pocket_language_bundle("") is None
-    assert pocket_language_bundle("Klingon") is None
-
-    # Only non-English languages publish a 24-layer bundle.
+    # French publishes no 6-layer model at all, so both variants are the 24-layer one.
+    assert pocket_language_bundle("French") == "french_24l"
     assert pocket_language_bundle("French", True) == "french_24l"
+    assert pocket_language_bundle("Portuguese") == "portuguese"
     assert pocket_language_bundle("Italian", True) == "italian_24l"
+    # English publishes no 24-layer variant.
     assert pocket_language_bundle("English", True) == "english"
+
+    # Auto and unknown values must still resolve to a real bundle, because
+    # passing no language yields a runtime that cannot clone at all.
+    assert pocket_language_bundle("Auto") == "english"
+    assert pocket_language_bundle("") == "english"
+    assert pocket_language_bundle("Klingon") == "english"
 
 
 def test_pocket_load_options_carry_language_temperature_and_quantisation() -> None:
+    import soundmaster.core.tts as tts_module
     from soundmaster.core.tts import QwenVoiceService
 
-    options = QwenVoiceService._pocket_load_options(
-        "French",
-        {"temperature": 0.55, "speed": 1.2, "pocket_quantize": True},
-    )
-    assert options == {"language": "french", "temp": 0.55, "quantize": True}
+    original = tts_module._cuda_available
+    tts_module._cuda_available = lambda: False
+    try:
+        options = QwenVoiceService._pocket_load_options(
+            "French",
+            {"temperature": 0.55, "speed": 1.2, "pocket_quantize": True},
+        )
+        assert options == {"language": "french_24l", "temp": 0.55, "quantize": True}
+
+        # With a GPU present, quantisation must be dropped: the quantised model
+        # has no CUDA kernels, so honouring it would be slower, not faster.
+        tts_module._cuda_available = lambda: True
+        on_gpu = QwenVoiceService._pocket_load_options(
+            "French", {"temperature": 0.55, "pocket_quantize": True}
+        )
+        assert "quantize" not in on_gpu
+        assert on_gpu == {"language": "french_24l", "temp": 0.55}
+    finally:
+        tts_module._cuda_available = original
 
     # Speed and top-p are not load-time arguments and must not leak in.
     assert "speed" not in options
@@ -267,7 +284,7 @@ def test_pocket_load_options_carry_language_temperature_and_quantisation() -> No
     )
     assert hq["language"] == "spanish_24l"
 
-    assert QwenVoiceService._pocket_load_options("Auto", {}) == {}
+    assert QwenVoiceService._pocket_load_options("Auto", {}) == {"language": "english"}
 
 
 def test_changing_the_pocket_language_reloads_the_engine(
@@ -296,3 +313,72 @@ def test_changing_the_pocket_language_reloads_the_engine(
 
     service._load_engine(directory, "pocket-tts", {"language": "german", "quantize": True})
     assert len(built) == 3
+
+
+def test_every_mapped_bundle_exists_in_the_installed_runtime() -> None:
+    """Guard against inventing bundle names the runtime does not publish.
+
+    Skipped when the optional runtime is absent; when it is installed this is
+    the check that catches a language mapped to a model that cannot be loaded.
+    """
+
+    pocket_tts = pytest.importorskip("pocket_tts")
+    from pocket_tts.utils.config import CONFIGS_DIR
+
+    from soundmaster.core.tts import POCKET_LANGUAGE_BUNDLES, pocket_language_bundle
+
+    available = {path.stem for path in Path(CONFIGS_DIR).glob("*.yaml")}
+    assert available, f"no configs found next to {pocket_tts.__file__}"
+
+    for language in POCKET_LANGUAGE_BUNDLES:
+        for high_quality in (False, True):
+            bundle = pocket_language_bundle(language, high_quality)
+            assert bundle in available, (
+                f"{language} (hq={high_quality}) maps to {bundle!r}, "
+                f"which the runtime does not publish: {sorted(available)}"
+            )
+    # The fallback used for Auto must be loadable too.
+    assert pocket_language_bundle("Auto") in available
+
+
+def test_gated_cloning_repository_produces_actionable_instructions() -> None:
+    """The first thing a new user hits is the gated model, not a code bug."""
+
+    from soundmaster.core.tts import POCKET_GATED_HINT, _is_gated_model
+
+    real = ValueError(
+        "We could not download the weights for the model with voice cloning, "
+        "but you're trying to use voice cloning. Without voice cloning, you can "
+        "use our catalog of voices [...]. If you want access to the model with "
+        "voice cloning, go to https://huggingface.co/kyutai/pocket-tts and "
+        "accept the terms, then make sure you're logged in locally."
+    )
+    assert _is_gated_model(real) is True
+    assert _is_gated_model(RuntimeError("disque plein")) is False
+
+    wrapped = RuntimeError("Generation impossible")
+    wrapped.__cause__ = real
+    assert _is_gated_model(wrapped) is True
+
+    # The message has to tell the user exactly what to do.
+    assert "huggingface.co/kyutai/pocket-tts" in POCKET_GATED_HINT
+    assert "acceptez les conditions" in POCKET_GATED_HINT
+    assert "login" in POCKET_GATED_HINT
+
+
+def test_quantised_models_are_never_pushed_to_the_gpu() -> None:
+    """Quantised weights have no CUDA kernels; moving them there crashes."""
+
+    from soundmaster.core.tts import QwenVoiceService
+
+    class Model:
+        def __init__(self) -> None:
+            self.moved_to = None
+
+        def to(self, device):
+            self.moved_to = device
+            return self
+
+    quantised = Model()
+    assert QwenVoiceService._place_pocket_model(quantised, quantized=True) is quantised
+    assert quantised.moved_to is None

@@ -894,10 +894,12 @@ def test_language_choice_offers_every_pocket_bundle_and_survives_a_save(
         window.voice_language.itemData(index)
         for index in range(window.voice_language.count())
     ]
-    assert tokens[0] == "Auto"
+    # A French application must not silently clone with the English model.
+    assert tokens[0] == "French"
+    assert "Auto" in tokens
     # Every published Pocket TTS language must be reachable from the UI.
     assert set(POCKET_LANGUAGE_BUNDLES).issubset(set(tokens))
-    for token in tokens[1:]:
+    for token in tokens:
         assert pocket_language_bundle(token) is not None
 
     sample = tmp_path / "sample.wav"

@@ -15,7 +15,7 @@ From the repository root:
 
 ```powershell
 python -m pip install ".[dev,build]"
-.\packaging\build_windows.ps1 -Version 0.5.1
+.\packaging\build_windows.ps1 -Version 0.5.2
 ```
 
 The outputs are written to `dist/` and `dist/installer/`. The script cleans those build directories, verifies that the requested version matches `pyproject.toml`, writes a temporary runtime version module, runs the checked-in `SoundMaster.spec`, creates the portable marker and ZIP, compiles the installer, and removes the temporary version module. Bump `pyproject.toml` before creating a release tag.
@@ -33,8 +33,8 @@ vMAJOR.MINOR.PATCH
 For example, after bumping the version in `pyproject.toml`:
 
 ```powershell
-git tag v0.5.1
-git push origin v0.5.1
+git tag v0.5.2
+git push origin v0.5.2
 ```
 
 GitHub Actions then runs tests, builds both artifacts on `windows-2022`, uploads workflow artifacts, and attaches the ZIP and installer to a generated GitHub Release. The workflow needs the repository's default `GITHUB_TOKEN` to have `contents: write` permission; the workflow declares this explicitly.

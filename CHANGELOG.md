@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.2 — 2026-08-09
+
+Validated by installing the runtime and cloning a real voice end to end, rather than from the documentation. Three of the four findings below only appear when the model actually runs.
+
+### Fixed
+
+- `French` mapped to a bundle that does not exist. The runtime states plainly: "For technical reasons, only a larger 24-layer model is available for French." Every French generation therefore failed. The language table now mirrors what the runtime publishes instead of assuming a naming pattern, and a test asserts every mapped bundle exists in the installed `pocket_tts` config directory.
+- `Auto` passed no language, and the resulting runtime cannot clone at all — it falls back to a build limited to its own voice catalogue. `Auto` now resolves to a real bundle, and new voices default to French rather than silently cloning with the English model.
+- Ticking "Génération accélérée" on a machine with a GPU made generation *slower* (21.8 s instead of 8.8 s): quantised weights have no CUDA kernels, so the model was forced back onto the CPU. Quantisation is now only applied when there is no GPU.
+
+### Added
+
+- Automatic GPU placement for Pocket TTS. Upstream reports no GPU benefit, but that is the 6-layer English model; measured here on the 24-layer French bundle, CUDA is the fastest option (CPU 11.5 s, CPU+quantisation 9.6 s, CUDA 8.8 s for ~8 s of speech).
+- Clear instructions when the cloning weights are unreachable. They live in a gated Hugging Face repository, so a new user's first attempt fails with a raw `ValueError`; SoundMaster now explains how to accept the terms and log in.
+- The high-quality toggle is disabled, with an explanation, for languages that publish no second variant (French, English).
+
+### Validation
+
+- 91 automated tests passed; ruff and compilation clean.
+- Real end-to-end run: `pocket-tts` installed from the extra, a French reference clip produced with a Windows SAPI voice the model has never seen, then cloned through SoundMaster's own service.
+- Full click-by-click journey through the real window: locked menu → terms → return → new voice → sample loaded and played → saved → "Tester la voix" → "Générer" → result played → added to favorites → appears on the dashboard → regenerated.
+- Warm generation runs at roughly real time (3.5 s of speech in 3.6 s), with spectral similarity to the reference between 0.985 and 0.998.
+
 ## 0.5.1 — 2026-08-09
 
 ### Fixed
