@@ -2,7 +2,7 @@
 
 SoundMaster est une application Windows locale destinée aux joueurs : soundboard, lecture audio hors ligne, génération vocale locale et routage vers un casque ou un câble audio virtuel.
 
-> **État actuel — v0.6.0 : clonage sans compte grâce au miroir du modèle, latence réduite et mises à jour intégrées**
+> **État actuel — v0.6.1 : clonage sans compte, prêt à l’emploi, latence réduite et mises à jour intégrées**
 >
 > Cette release fournit le socle PyQt6, le tableau de bord, l’explorateur Myinstants intégré, le cache hors ligne, les paramètres de conformité, les raccourcis Windows et la génération Qwen3-TTS locale optionnelle. Les modèles et les runtimes lourds restent téléchargeables séparément.
 
@@ -109,12 +109,18 @@ Les poids capables d’**imiter votre échantillon** sont dans un dépôt Huggin
 accès contrôlé. Sans autorisation, Pocket TTS se rabat silencieusement sur une version
 qui ne sait lire que son propre catalogue de voix, et le clonage échoue. Deux options.
 
-**Option A — publier un miroir (recommandé pour distribuer l’application).**
-Pocket TTS est sous licence **CC-BY-4.0**, qui autorise explicitement la
-redistribution et l’usage commercial à condition de créditer l’auteur et de joindre
-la licence. Vous pouvez donc republier les poids sur votre propre compte : vos
-utilisateurs n’auront alors **aucun compte à créer ni condition à accepter sur un
-site tiers**. Une seule fois, chez vous :
+**Option A — le miroir livré (par défaut, rien à faire).** SoundMaster télécharge
+déjà les poids depuis [`TeALO/pocket-tts-soundmaster`](https://huggingface.co/TeALO/pocket-tts-soundmaster),
+un miroir public : **aucun compte, aucune condition à accepter sur un site tiers.**
+Vérifié sans jeton et avec un cache vide.
+
+Pourquoi c’est permis : Pocket TTS est sous licence **CC-BY-4.0**, qui autorise
+explicitement la redistribution et l’usage commercial à condition de créditer
+l’auteur et de joindre la licence. Le verrou est une couche d’accès que Kyutai
+ajoute sur sa propre copie, pas une restriction de la licence.
+
+Pour publier votre propre miroir à la place, une seule commande, à lancer une fois
+par le développeur — jamais par les utilisateurs :
 
 ```bat
 .venv\Scripts\python -m huggingface_hub.commands.huggingface_cli login
@@ -264,10 +270,10 @@ Build local Windows :
 
 ```powershell
 python -m pip install ".[dev,build]"
-.\packaging\build_windows.ps1 -Version 0.6.0
+.\packaging\build_windows.ps1 -Version 0.6.1
 ```
 
-Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.6.0` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
+Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.6.1` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
 
 ```powershell
 git tag v0.2.0

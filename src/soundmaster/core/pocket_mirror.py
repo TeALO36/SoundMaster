@@ -24,9 +24,10 @@ from pathlib import Path
 MIRROR_PREFERENCE_KEY = "pocket_mirror_repo"
 MIRROR_ENV = "SOUNDMASTER_POCKET_MIRROR"
 
-# Set this to the mirror published with scripts/publier_miroir_pocket_tts.py to
-# make cloning work out of the box, with no Hugging Face account.
-DEFAULT_MIRROR_REPO = ""
+# Mirror published with scripts/publier_miroir_pocket_tts.py, so cloning works on
+# a fresh install with no Hugging Face account. Verified with no token and an
+# empty cache. Clear the field in the settings to use Kyutai's gated repository.
+DEFAULT_MIRROR_REPO = "TeALO/pocket-tts-soundmaster"
 
 UPSTREAM_REPO = "kyutai/pocket-tts"
 ATTRIBUTION = (

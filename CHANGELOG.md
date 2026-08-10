@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.1 — 2026-08-10
+
+### Changed
+
+- The Pocket TTS mirror is now published and shipped as the default source, so voice cloning works on a fresh install with **no Hugging Face account and no terms to accept on a third-party site**. Clearing the field in **Paramètres → Clonage de voix → Source du modèle** restores Kyutai's gated repository.
+- The mirror carries only the twelve per-language cloning weights (4.9 GB) rather than the whole 9.8 GB repository: the predefined-voice embeddings that make up the rest are already served from Kyutai's ungated copy, so mirroring them would have doubled the upload for nothing.
+
+### Validation
+
+- 104 automated tests passed; ruff and compilation clean.
+- Verified as a new user would experience it: a subprocess with **no Hugging Face token and an empty cache** downloaded the weights from the mirror and cloned the reference voice successfully (timbre 0.992).
+- Full click-by-click journey re-run through the real window against the shipped default: test, generation, playback, favorite, dashboard, regeneration — warm generation at roughly real time, timbre 0.985–0.994.
+
 ## 0.6.0 — 2026-08-09
 
 ### Added

@@ -29,6 +29,8 @@ from pathlib import Path
 
 UPSTREAM = "kyutai/pocket-tts"
 UNGATED = "kyutai/pocket-tts-without-voice-cloning"
+# The only gated files SoundMaster ever loads: one set of weights per language.
+WEIGHTS_PATTERN = "languages/*/model.safetensors"
 
 MODEL_CARD = """---
 license: cc-by-4.0
@@ -92,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     api = HfApi()
     try:
         who = api.whoami()
-    except Exception:
+    except Exception:  # noqa: BLE001 - any auth failure means "not logged in".
         print(
             "Vous n'êtes pas connecté à Hugging Face.\n"
             "Lancez d'abord :\n"
@@ -102,10 +104,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"Connecté en tant que : {who.get('name')}")
 
-    print(f"Téléchargement de {UPSTREAM} (nécessite d'avoir accepté ses conditions une fois)…")
+    # Only the per-language cloning weights are gated and referenced by
+    # ``weights_path``. The predefined-voice embeddings — the bulk of the 9.8 GB
+    # repository — are already served from Kyutai's ungated copy, so mirroring
+    # them would double the upload for nothing.
+    print(f"Téléchargement des poids de clonage depuis {UPSTREAM}…")
     try:
-        local = snapshot_download(repo_id=UPSTREAM)
-    except Exception as error:
+        local = snapshot_download(repo_id=UPSTREAM, allow_patterns=[WEIGHTS_PATTERN])
+    except Exception as error:  # noqa: BLE001 - hub errors vary; the advice is the same.
         print(
             f"Téléchargement impossible : {error}\n\n"
             f"Ouvrez https://huggingface.co/{UPSTREAM} et acceptez les conditions "
@@ -116,7 +122,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     source = Path(local)
     weights = sorted(source.rglob("*.safetensors"))
-    print(f"Récupéré : {len(weights)} fichier(s) de poids dans {source}")
+    total = sum(path.stat().st_size for path in weights)
+    print(f"Récupéré : {len(weights)} fichier(s), {total / 1e9:.2f} Go")
+    for path in weights:
+        print(f"   {path.parent.name}: {path.stat().st_size / 1e6:.0f} Mo")
 
     card = source / "README.md"
     original_card = card.read_text(encoding="utf-8") if card.is_file() else ""
@@ -134,8 +143,8 @@ def main(argv: list[str] | None = None) -> int:
         repo_id=args.repo_id,
         folder_path=str(source),
         repo_type="model",
-        ignore_patterns=[".cache*", "README.md"],
-        commit_message="Miroir de kyutai/pocket-tts (CC-BY-4.0)",
+        allow_patterns=[WEIGHTS_PATTERN],
+        commit_message="Miroir des poids de clonage de kyutai/pocket-tts (CC-BY-4.0)",
     )
     api.upload_file(
         path_or_fileobj=MODEL_CARD.encode("utf-8"),

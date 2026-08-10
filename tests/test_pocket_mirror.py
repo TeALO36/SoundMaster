@@ -51,6 +51,8 @@ def test_only_the_gated_weights_are_redirected() -> None:
 
 
 def test_configured_mirror_prefers_preference_then_environment(monkeypatch) -> None:
+    # Neutralise the shipped default so the precedence order is what is tested.
+    monkeypatch.setattr("soundmaster.core.pocket_mirror.DEFAULT_MIRROR_REPO", "")
     monkeypatch.delenv(MIRROR_ENV, raising=False)
     assert configured_mirror("moi/depuis-preference") == "moi/depuis-preference"
 
@@ -130,7 +132,8 @@ def test_service_swaps_language_for_the_mirrored_config(tmp_path: Path, monkeypa
     assert "language" not in options
     assert options == {"temp": 0.7, "config": str(fake_config)}
 
-    # No mirror configured: the language path is left exactly as it was.
+    # With no mirror anywhere, the language path is left exactly as it was.
+    monkeypatch.setattr("soundmaster.core.pocket_mirror.DEFAULT_MIRROR_REPO", "")
     monkeypatch.delenv(MIRROR_ENV, raising=False)
     untouched = service._apply_pocket_mirror(
         {"language": "french_24l", "temp": 0.7}, {"pocket_mirror": ""}
@@ -189,3 +192,25 @@ def test_rewrite_matches_the_installed_runtime_layout(language: str) -> None:
     assert rewritten != original, "the gated weights path should have been redirected"
     assert "weights_path: hf://moi/mon-miroir/" in rewritten
     assert f"weights_path: hf://{UPSTREAM_REPO}/" not in rewritten
+
+
+def test_shipped_default_mirror_is_usable_if_set() -> None:
+    """A shipped default must be a valid identifier, or cloning silently regresses."""
+
+    from soundmaster.core.pocket_mirror import DEFAULT_MIRROR_REPO
+
+    if not DEFAULT_MIRROR_REPO:
+        pytest.skip("aucun miroir livré par défaut")
+    assert is_valid_repo_id(DEFAULT_MIRROR_REPO)
+    assert DEFAULT_MIRROR_REPO != UPSTREAM_REPO, (
+        "pointer le défaut sur le dépôt verrouillé annulerait tout l'intérêt"
+    )
+
+
+def test_default_mirror_applies_without_any_preference(monkeypatch) -> None:
+    from soundmaster.core.pocket_mirror import DEFAULT_MIRROR_REPO
+
+    monkeypatch.delenv(MIRROR_ENV, raising=False)
+    assert configured_mirror("") == DEFAULT_MIRROR_REPO
+    # An explicit preference still wins over the shipped default.
+    assert configured_mirror("moi/autre-miroir") == "moi/autre-miroir"
