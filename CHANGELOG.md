@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.0 — 2026-08-09
+
+### Added
+
+- **Mirror support for the Pocket TTS weights.** Kyutai's copy sits behind an access gate, so a first-time user had to create a Hugging Face account, accept terms on a website and log in locally before cloning worked at all. Pocket TTS is published under CC-BY-4.0, which permits redistribution and commercial use with attribution, so the weights can be re-published on your own account and served without any gate. Point SoundMaster at the mirror in **Paramètres → Clonage de voix → Source du modèle**, through `SOUNDMASTER_POCKET_MIRROR`, or by setting `DEFAULT_MIRROR_REPO` for a shipped default.
+- `scripts/publier_miroir_pocket_tts.py`, which copies the weights unmodified and writes the model card carrying the attribution, the licence, and Kyutai's acceptable-use policy.
+- Attribution shown in the app under the cloning terms, as CC-BY-4.0 requires: author, licence, and a link to the original model.
+
+### Notes
+
+- Accepting Kyutai's own gate from inside the application is not possible: Hugging Face exposes no API for it. The mirror is what removes the detour.
+- Removing the gate also removes where its acceptable-use policy was shown, so those commitments are carried by SoundMaster's own consent screen, which already required explicit consent of the person being cloned and prohibited deceptive use.
+- This is a reading of the licence terms, not legal advice; the compliance page exists for a professional review before commercial distribution.
+
+### Implementation
+
+- The redirect uses the engine's documented `config=` argument: only `weights_path` is rewritten, since the tokenizer and the fallback weights already live in Kyutai's ungated repository. `language=` and `config=` are mutually exclusive, so the mirror replaces the language rather than adding to it.
+- Any mirror failure — invalid identifier, unknown language, unreadable file — falls back to the normal path, so a broken mirror can never make cloning unavailable.
+
+### Validation
+
+- 102 automated tests passed; ruff and compilation clean.
+- The rewrite was checked against the real installed configs for three languages, and a full generation was produced through the `config=` path, confirming the mechanism end to end (timbre 0.972 against the reference).
+
 ## 0.5.2 — 2026-08-09
 
 Validated by installing the runtime and cloning a real voice end to end, rather than from the documentation. Three of the four findings below only appear when the model actually runs.

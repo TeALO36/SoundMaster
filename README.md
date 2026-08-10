@@ -2,7 +2,7 @@
 
 SoundMaster est une application Windows locale destinée aux joueurs : soundboard, lecture audio hors ligne, génération vocale locale et routage vers un casque ou un câble audio virtuel.
 
-> **État actuel — v0.5.2 : clonage Pocket TTS validé de bout en bout, latence réduite et mises à jour intégrées**
+> **État actuel — v0.6.0 : clonage sans compte grâce au miroir du modèle, latence réduite et mises à jour intégrées**
 >
 > Cette release fournit le socle PyQt6, le tableau de bord, l’explorateur Myinstants intégré, le cache hors ligne, les paramètres de conformité, les raccourcis Windows et la génération Qwen3-TTS locale optionnelle. Les modèles et les runtimes lourds restent téléchargeables séparément.
 
@@ -103,24 +103,48 @@ Le moteur par défaut est **Pocket TTS** (Kyutai) : environ 100 M de paramètres
 .venv\\Scripts\\python -m pip install -e ".[pocket]"
 ```
 
-#### Autoriser le clonage (obligatoire une seule fois)
+#### Autoriser le clonage
 
 Les poids capables d’**imiter votre échantillon** sont dans un dépôt Hugging Face à
-accès contrôlé. Sans cette autorisation, Pocket TTS se rabat silencieusement sur une
-version qui ne sait lire que son propre catalogue de voix, et le clonage échoue.
-Une seule fois :
+accès contrôlé. Sans autorisation, Pocket TTS se rabat silencieusement sur une version
+qui ne sait lire que son propre catalogue de voix, et le clonage échoue. Deux options.
 
-1. ouvrez [huggingface.co/kyutai/pocket-tts](https://huggingface.co/kyutai/pocket-tts)
-   et acceptez les conditions du modèle (compte gratuit) ;
-2. créez un jeton d’accès en lecture sur
-   [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) ;
-3. connectez-vous localement :
+**Option A — publier un miroir (recommandé pour distribuer l’application).**
+Pocket TTS est sous licence **CC-BY-4.0**, qui autorise explicitement la
+redistribution et l’usage commercial à condition de créditer l’auteur et de joindre
+la licence. Vous pouvez donc republier les poids sur votre propre compte : vos
+utilisateurs n’auront alors **aucun compte à créer ni condition à accepter sur un
+site tiers**. Une seule fois, chez vous :
 
 ```bat
-.venv\\Scripts\\python -m huggingface_hub.commands.huggingface_cli login
+.venv\Scripts\python -m huggingface_hub.commands.huggingface_cli login
+.venv\Scripts\python scripts/publier_miroir_pocket_tts.py VOTRE-COMPTE/pocket-tts-soundmaster
 ```
 
-Si cette étape manque, SoundMaster affiche ces instructions au lieu d’une erreur brute.
+Le script copie les poids sans les modifier et écrit la carte de modèle avec
+l’attribution à Kyutai, la licence et la charte d’usage. Indiquez ensuite le miroir
+dans **Paramètres → Clonage de voix → Source du modèle**, ou fixez
+`DEFAULT_MIRROR_REPO` dans `src/soundmaster/core/pocket_mirror.py` pour que ce soit
+le comportement livré par défaut.
+
+Deux obligations vous incombent alors, et l’application les assume déjà :
+l’**attribution** (affichée sous les conditions d’utilisation) et la **charte d’usage**
+que le verrou de Kyutai servait à faire lire — pas d’imitation sans consentement
+explicite, pas de fraude — reprise dans l’écran de consentement de SoundMaster.
+Ce n’est pas un avis juridique : faites relire avant une commercialisation.
+
+**Option B — utiliser le dépôt officiel.** Chaque utilisateur ouvre
+[huggingface.co/kyutai/pocket-tts](https://huggingface.co/kyutai/pocket-tts), accepte
+les conditions (approbation immédiate), crée un jeton sur
+[settings/tokens](https://huggingface.co/settings/tokens) puis se connecte :
+
+```bat
+.venv\Scripts\python -m huggingface_hub.commands.huggingface_cli login
+```
+
+Si l’accès manque, SoundMaster affiche ces instructions au lieu d’une erreur brute.
+Hugging Face n’expose aucune API permettant d’accepter ces conditions depuis
+l’application : c’est précisément ce que l’option A évite.
 
 #### Langues et vitesse
 
@@ -240,10 +264,10 @@ Build local Windows :
 
 ```powershell
 python -m pip install ".[dev,build]"
-.\packaging\build_windows.ps1 -Version 0.5.2
+.\packaging\build_windows.ps1 -Version 0.6.0
 ```
 
-Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.5.2` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
+Le workflow `.github/workflows/release.yml` s’exécute lorsqu’un tag comme `v0.6.0` est poussé. Il lance les tests, construit le ZIP portable et l’installateur, puis les joint à une GitHub Release.
 
 ```powershell
 git tag v0.2.0

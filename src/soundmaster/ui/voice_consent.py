@@ -125,6 +125,21 @@ class VoiceConsentPanel(QWidget):
         footer.setObjectName("muted")
         footer.setWordWrap(True)
         layout.addWidget(footer)
+
+        # CC-BY-4.0 requires the credit and the licence to travel with the model,
+        # including when its weights are served from a mirror.
+        credit = QLabel(
+            "Moteur de clonage : <b>Pocket TTS</b> © "
+            "<a href='https://kyutai.org/'>Kyutai</a>, sous licence "
+            "<a href='https://creativecommons.org/licenses/by/4.0/'>CC-BY-4.0</a> · "
+            "<a href='https://huggingface.co/kyutai/pocket-tts'>modèle d’origine</a>. "
+            "Les engagements ci-dessus reprennent la charte d’usage de Kyutai."
+        )
+        credit.setObjectName("muted")
+        credit.setWordWrap(True)
+        credit.setTextFormat(Qt.TextFormat.RichText)
+        credit.setOpenExternalLinks(True)
+        layout.addWidget(credit)
         self._sync_open_button(accepted)
 
     def is_accepted(self) -> bool:

@@ -16,6 +16,7 @@ from typing import Any
 
 from soundmaster.core.config import AppPaths
 from soundmaster.core.models import get_profile, model_path
+from soundmaster.core.pocket_mirror import configured_mirror, mirror_config
 
 SUPPORTED_ENGINE_KEYS = ("pocket-tts", "qwen3-tts", "omnivoice")
 
@@ -222,6 +223,8 @@ class QwenVoiceService:
         load_options = (
             self._pocket_load_options(language, settings) if engine_key == "pocket-tts" else {}
         )
+        if engine_key == "pocket-tts":
+            load_options = self._apply_pocket_mirror(load_options, settings)
         model = self._load_engine(local_model, engine_key, load_options)
         try:
             if engine_key == "pocket-tts":
@@ -285,6 +288,31 @@ class QwenVoiceService:
         # "faster" would make generation slower than leaving it off.
         if settings.get("pocket_quantize") and not _cuda_available():
             options["quantize"] = True
+        return options
+
+    def _apply_pocket_mirror(
+        self, load_options: dict[str, object], settings: dict[str, object] | None
+    ) -> dict[str, object]:
+        """Swap ``language=`` for a mirrored ``config=`` when one is configured.
+
+        The engine rejects both arguments together, so the mirror replaces the
+        language rather than adding to it. Any failure falls back to the normal
+        path: a broken mirror must never make cloning unavailable.
+        """
+
+        mirror = configured_mirror(str((settings or {}).get("pocket_mirror") or ""))
+        language = load_options.get("language")
+        if not mirror or not isinstance(language, str):
+            return load_options
+        try:
+            config = mirror_config(language, mirror, self.paths.models / "pocket-configs")
+        except OSError:
+            return load_options
+        if config is None:
+            return load_options
+        options = dict(load_options)
+        options.pop("language")
+        options["config"] = str(config)
         return options
 
     def _generate_pocket(

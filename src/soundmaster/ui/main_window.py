@@ -54,6 +54,12 @@ from soundmaster.core.myinstants import (
     cache_audio,
     search_myinstants,
 )
+from soundmaster.core.pocket_mirror import (
+    DEFAULT_MIRROR_REPO,
+    MIRROR_PREFERENCE_KEY,
+    configured_mirror,
+    is_valid_repo_id,
+)
 from soundmaster.core.tts import (
     QwenVoiceService,
     VoiceGenerationError,
@@ -1259,6 +1265,7 @@ class MainWindow(QMainWindow):
         self.voice_consent.changed.connect(self._set_voice_cloning_consent)
         self.voice_consent.open_requested.connect(lambda: self._select_page(1))
         inner_layout.addWidget(self.voice_consent)
+        inner_layout.addWidget(self._pocket_source_group())
         inner_layout.addStretch(1)
         scroll.setWidget(inner)
         self.voice_consent_scroll = scroll
@@ -1281,6 +1288,66 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Fermeture de SoundMaster pour la mise à jour…", 4000)
         self._allow_close = True
         self.close()
+
+    def _pocket_source_group(self) -> QWidget:
+        """Let the model be served from a mirror instead of the gated repository."""
+
+        group = QGroupBox("Source du modèle de clonage")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(8)
+        hint = QLabel(
+            "Par défaut, Pocket TTS télécharge ses poids depuis le dépôt de Kyutai, "
+            "dont l’accès demande un compte Hugging Face et l’acceptation de "
+            "conditions sur leur site. Si vous avez publié un miroir du modèle "
+            "(licence CC-BY-4.0, redistribution autorisée avec attribution), "
+            "indiquez-le ici : plus aucun compte ne sera nécessaire."
+        )
+        hint.setObjectName("muted")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.pocket_mirror_input = QLineEdit(
+            self.library.preference(MIRROR_PREFERENCE_KEY, DEFAULT_MIRROR_REPO)
+        )
+        self.pocket_mirror_input.setPlaceholderText(
+            "compte/nom-du-miroir — laissez vide pour utiliser le dépôt officiel"
+        )
+        row.addWidget(self.pocket_mirror_input, 1)
+        save_mirror = QPushButton("Appliquer")
+        save_mirror.setObjectName("compactButton")
+        save_mirror.clicked.connect(self._save_pocket_mirror)
+        row.addWidget(save_mirror)
+        layout.addLayout(row)
+        self.pocket_mirror_status = QLabel()
+        self.pocket_mirror_status.setObjectName("muted")
+        self.pocket_mirror_status.setWordWrap(True)
+        layout.addWidget(self.pocket_mirror_status)
+        self._describe_pocket_mirror()
+        return group
+
+    def _describe_pocket_mirror(self) -> None:
+        active = configured_mirror(self.library.preference(MIRROR_PREFERENCE_KEY, ""))
+        self.pocket_mirror_status.setText(
+            f"Source actuelle : miroir « {active} » — aucun compte requis."
+            if active
+            else "Source actuelle : dépôt officiel Kyutai (compte Hugging Face requis "
+            "pour le clonage)."
+        )
+
+    def _save_pocket_mirror(self) -> None:
+        value = self.pocket_mirror_input.text().strip()
+        if value and not is_valid_repo_id(value):
+            self.statusBar().showMessage(
+                "Identifiant invalide : utilisez la forme compte/nom-du-depot.", 6000
+            )
+            return
+        self.library.set_preference(MIRROR_PREFERENCE_KEY, value)
+        self._describe_pocket_mirror()
+        self.statusBar().showMessage(
+            "Source du modèle enregistrée. Elle sera utilisée à la prochaine génération.",
+            6000,
+        )
 
     def _audio_settings_tab(self) -> QWidget:
         tab = QWidget()
@@ -1952,6 +2019,7 @@ class MainWindow(QMainWindow):
             "repetition_penalty": self.voice_repetition_penalty.value(),
             "pocket_high_quality": self.voice_high_quality.isChecked(),
             "pocket_quantize": self.voice_quantize.isChecked(),
+            "pocket_mirror": self.library.preference(MIRROR_PREFERENCE_KEY, DEFAULT_MIRROR_REPO),
         }
 
     def _voice_language(self) -> str:
