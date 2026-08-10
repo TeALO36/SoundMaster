@@ -26,7 +26,6 @@ release/
 
 # SoundMaster runtime data
 .runtime/
-.freebuff/
 logs/
 *.db
 *.db-shm
@@ -50,6 +49,20 @@ settings.local.json
 *.pem
 *.p12
 *.pfx
+
+# AI coding tools (local config, caches and session data)
+.claude/
+.codebuff/
+.freebuff/
+.cursor/
+.copilot/
+.aider/
+.continue/
+.windsurf/
+.gemini/
+.codeium/
+.roo/
+.amazonq/
 
 # IDE and editor files
 .vscode/
