@@ -1,9 +1,17 @@
+import pytest
+from PyQt6.QtWidgets import QApplication
+
 from soundmaster.resources import (
     get_app_icon,
     get_resource_dir,
     get_resource_path,
     get_settings_icon,
 )
+
+
+@pytest.fixture
+def qapp() -> QApplication:
+    return QApplication.instance() or QApplication([])
 
 
 def test_resource_paths_exist() -> None:
@@ -18,11 +26,11 @@ def test_resource_paths_exist() -> None:
     assert settings_path.is_file()
 
 
-def test_get_app_icon_returns_valid_icon() -> None:
+def test_get_app_icon_returns_valid_icon(qapp: QApplication) -> None:
     icon = get_app_icon()
     assert not icon.isNull()
 
 
-def test_get_settings_icon_returns_valid_icon() -> None:
+def test_get_settings_icon_returns_valid_icon(qapp: QApplication) -> None:
     icon = get_settings_icon()
     assert not icon.isNull()
