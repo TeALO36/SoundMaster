@@ -107,7 +107,7 @@ def test_voice_cloning_is_locked_until_the_user_accepts_the_terms(
     # A fresh install has never accepted anything: the menu is locked.
     assert window._voice_cloning_accepted() is False
     assert window.nav_buttons[1].objectName() == "navButtonLocked"
-    assert "🔒" in window.nav_buttons[1].text()
+    assert not window.nav_buttons[1].icon().isNull()
     assert window.voice_stack.currentIndex() == 0
 
     # Clicking the locked entry redirects to the terms instead of the workspace.

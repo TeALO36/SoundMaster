@@ -977,6 +977,8 @@ class MainWindow(QMainWindow):
         layout.setSpacing(6)
         self.voice_advanced_button = QToolButton()
         self.voice_advanced_button.setText("Réglages avancés de cette voix")
+        self.voice_advanced_button.setCheckable(True)
+        self.voice_advanced_button.setChecked(False)
         settings_icon = get_settings_icon()
         if not settings_icon.isNull():
             self.voice_advanced_button.setIcon(settings_icon)
