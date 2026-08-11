@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.6.1"
+  #define MyAppVersion "0.7.0"
 #endif
 
 #define MyAppName "SoundMaster"
@@ -27,6 +27,7 @@ OutputBaseFilename=SoundMaster-v{#MyAppVersion}-Setup
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Files]

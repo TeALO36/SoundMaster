@@ -2,7 +2,7 @@
 
 SoundMaster est une application Windows locale destinée aux joueurs : soundboard, lecture audio hors ligne, génération vocale locale et routage vers un casque ou un câble audio virtuel.
 
-> **État actuel — v0.6.1 : clonage sans compte, prêt à l’emploi, latence réduite et mises à jour intégrées**
+> **État actuel — v0.7.0 : icône officielle d’application, clonage sans compte, prêt à l’emploi, latence réduite et mises à jour intégrées**
 >
 > Cette release fournit le socle PyQt6, le tableau de bord, l’explorateur Myinstants intégré, le cache hors ligne, les paramètres de conformité, les raccourcis Windows et la génération Qwen3-TTS locale optionnelle. Les modèles et les runtimes lourds restent téléchargeables séparément.
 

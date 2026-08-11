@@ -11,10 +11,16 @@ SRC = ROOT / "src"
 
 sounddevice_datas, sounddevice_binaries, sounddevice_hiddenimports = collect_all("sounddevice")
 
+datas = [
+    (str(SRC / "soundmaster" / "resources"), "soundmaster/resources"),
+    *sounddevice_datas,
+]
+
 hiddenimports = [
     "keyboard",
     *collect_submodules("keyboard"),
     "soundmaster.__main__",
+    "soundmaster.resources",
     *sounddevice_hiddenimports,
     *collect_submodules("soundmaster.core"),
     *collect_submodules("soundmaster.ui"),
@@ -24,7 +30,7 @@ analysis = Analysis(
     [str(SRC / "soundmaster" / "main.py")],
     pathex=[str(SRC)],
     binaries=sounddevice_binaries,
-    datas=sounddevice_datas,
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -52,6 +58,7 @@ executable = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
+    icon=str(ROOT / "packaging" / "icon.ico"),
 )
 
 COLLECT(

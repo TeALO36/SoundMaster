@@ -10,7 +10,7 @@ from threading import Thread
 from typing import ClassVar
 
 from PyQt6.QtCore import QEvent, QObject, Qt, QThread, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QDesktopServices, QKeyEvent, QKeySequence
+from PyQt6.QtGui import QAction, QDesktopServices, QIcon, QKeyEvent, QKeySequence
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -48,6 +48,7 @@ from soundmaster.core.audio_capture import SystemAudioRecorder, wasapi_output_de
 from soundmaster.core.config import AppConfig, AppPaths
 from soundmaster.core.legal import LegalProfile
 from soundmaster.core.models import get_profile, is_downloaded
+from soundmaster.resources import get_app_icon, get_icon, get_settings_icon
 from soundmaster.core.myinstants import (
     MyInstantResult,
     MyInstantsError,
@@ -579,7 +580,10 @@ class MainWindow(QMainWindow):
             self.nav_buttons.append(button)
             side_layout.addWidget(button)
         side_layout.addStretch(1)
-        settings = QPushButton("⚙  Paramètres")
+        settings = QPushButton("Paramètres")
+        settings_icon = get_settings_icon()
+        if not settings_icon.isNull():
+            settings.setIcon(settings_icon)
         settings.setObjectName("settingsButton")
         settings.clicked.connect(self._select_settings)
         side_layout.addWidget(settings)
@@ -721,7 +725,7 @@ class MainWindow(QMainWindow):
             self._LOCKED_CARD_PADDING, 24, self._LOCKED_CARD_PADDING, 24
         )
         card_layout.setSpacing(12)
-        title = QLabel("🔒  Clonage de voix verrouillé")
+        title = QLabel("Clonage de voix verrouillé")
         title.setObjectName("stepTitle")
         card_layout.addWidget(title)
         body = QLabel(
@@ -773,15 +777,15 @@ class MainWindow(QMainWindow):
     def _voice_step_choose(self) -> QWidget:
         card, layout = self._step_card(
             "1",
-            "Choisissez une voix",
-            "Une voix = un échantillon audio et ses réglages. Créez-en autant que vous voulez.",
+            "Nommez ou choisissez une voix",
+            "Une voix = un nom, un échantillon audio et ses réglages. Créez-en autant que vous voulez.",
         )
         setup_row = QGridLayout()
         setup_row.setHorizontalSpacing(8)
         setup_row.setVerticalSpacing(6)
         self._voice_setup_layout = setup_row
         self.voice_profile_combo = QComboBox()
-        self.voice_profile_combo.setPlaceholderText("Mes voix enregistrées…")
+        self.voice_profile_combo.setPlaceholderText("Mes voix sauvegardées…")
         self.voice_profile_combo.currentIndexChanged.connect(self._voice_profile_changed)
         setup_row.addWidget(self.voice_profile_combo, 0, 0)
         add_voice = QPushButton("+ Nouvelle voix")
@@ -806,10 +810,11 @@ class MainWindow(QMainWindow):
             "Ce nom regroupe l’échantillon et tous les réglages avancés de cette voix."
         )
         name_row.addWidget(self.voice_profile_name, 1)
-        self.voice_save_button = QPushButton("Enregistrer")
+        self.voice_save_button = QPushButton("Sauvegarder")
+        self.voice_save_button.setIcon(get_icon("save"))
         self.voice_save_button.setObjectName("compactButton")
         self.voice_save_button.setToolTip(
-            "Conserver cette voix pour la réutiliser plus tard (facultatif pour générer)"
+            "Sauvegarder cette voix pour la réutiliser plus tard (facultatif pour générer)"
         )
         self.voice_save_button.clicked.connect(self._save_voice_profile)
         name_row.addWidget(self.voice_save_button)
@@ -826,7 +831,7 @@ class MainWindow(QMainWindow):
     def _voice_step_sample(self) -> QWidget:
         card, layout = self._step_card(
             "2",
-            "Donnez-lui une voix à imiter",
+            "Capturez ou importez l'échantillon audio",
             "3 à 10 secondes de parole claire suffisent. Écoutez toujours l’échantillon "
             "avant de générer : c’est lui qui décide du résultat.",
         )
@@ -835,6 +840,7 @@ class MainWindow(QMainWindow):
         record_row.setVerticalSpacing(6)
         self._voice_record_layout = record_row
         self.voice_record_button = QPushButton(self._MIC_BUTTON_LABEL)
+        self.voice_record_button.setIcon(get_icon("mic"))
         self.voice_record_button.setObjectName("compactButton")
         self.voice_record_button.setToolTip(self._MIC_BUTTON_HINT)
         self.voice_record_button.clicked.connect(self._toggle_micro_recording)
@@ -862,7 +868,8 @@ class MainWindow(QMainWindow):
             )
         self._voice_record_widgets.append(self.voice_system_record_button)
         record_row.addWidget(self.voice_system_record_button, 0, 1)
-        self.voice_import_button = QPushButton("📁 Importer un fichier")
+        self.voice_import_button = QPushButton("Importer un fichier")
+        self.voice_import_button.setIcon(get_icon("import_file"))
         self.voice_import_button.setObjectName("compactButton")
         self.voice_import_button.setToolTip(
             "Copier un fichier audio existant dans la banque SoundMaster"
@@ -873,7 +880,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(record_row)
 
         self.voice_sample_player = AudioPreviewBar(
-            "Aucun échantillon — enregistrez ou importez un audio ci-dessus"
+            "Aucun échantillon — capturez ou importez un audio ci-dessus"
         )
         self.voice_sample_player.setToolTip("Réécoutez l’échantillon qui servira de modèle")
         layout.addWidget(self.voice_sample_player)
@@ -881,7 +888,7 @@ class MainWindow(QMainWindow):
         # The full path stays available for advanced users; the simple flow only
         # needs the player above.
         self.voice_sample = QLineEdit()
-        self.voice_sample.setPlaceholderText("Enregistrez, capturez ou importez un échantillon")
+        self.voice_sample.setPlaceholderText("Capturez au micro, capturez la sortie ou importez un échantillon")
         self.voice_sample.setReadOnly(True)
         return card
 
@@ -901,7 +908,8 @@ class MainWindow(QMainWindow):
 
         action_bar = QHBoxLayout()
         action_bar.setSpacing(8)
-        self.voice_test_button = QPushButton("🎧 Tester la voix")
+        self.voice_test_button = QPushButton("Tester la voix")
+        self.voice_test_button.setIcon(get_icon("headphones"))
         self.voice_test_button.setObjectName("secondaryButton")
         self.voice_test_button.setToolTip(
             "Génère une phrase courte et la joue immédiatement, pour vérifier le rendu "
@@ -909,7 +917,8 @@ class MainWindow(QMainWindow):
         )
         self.voice_test_button.clicked.connect(self._test_voice)
         action_bar.addWidget(self.voice_test_button, 1)
-        self.voice_generate_button = QPushButton("✨ Générer")
+        self.voice_generate_button = QPushButton("Générer")
+        self.voice_generate_button.setIcon(get_icon("sparkle"))
         self.voice_generate_button.setObjectName("primaryButton")
         self.voice_generate_button.setToolTip("Générer le texte complet avec cette voix, en local")
         self.voice_generate_button.clicked.connect(self._generate_voice)
@@ -952,7 +961,8 @@ class MainWindow(QMainWindow):
         self.voice_result_favorite_button.setEnabled(False)
         self.voice_result_favorite_button.clicked.connect(self._favorite_last_generation)
         actions.addWidget(self.voice_result_favorite_button, 1)
-        self.voice_result_folder_button = QPushButton("📂 Ouvrir le dossier")
+        self.voice_result_folder_button = QPushButton("Ouvrir le dossier")
+        self.voice_result_folder_button.setIcon(get_icon("folder_open"))
         self.voice_result_folder_button.setObjectName("compactButton")
         self.voice_result_folder_button.setEnabled(False)
         self.voice_result_folder_button.clicked.connect(self._open_last_generation_folder)
@@ -966,10 +976,13 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self.voice_advanced_button = QToolButton()
-        self.voice_advanced_button.setText("⚙ Réglages avancés de cette voix")
-        self.voice_advanced_button.setCheckable(True)
-        self.voice_advanced_button.setChecked(False)
-        self.voice_advanced_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.voice_advanced_button.setText("Réglages avancés de cette voix")
+        settings_icon = get_settings_icon()
+        if not settings_icon.isNull():
+            self.voice_advanced_button.setIcon(settings_icon)
+            self.voice_advanced_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        else:
+            self.voice_advanced_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.voice_advanced_button.setObjectName("advancedButton")
         layout.addWidget(self.voice_advanced_button, 0, Qt.AlignmentFlag.AlignLeft)
 
@@ -1453,7 +1466,12 @@ class MainWindow(QMainWindow):
         accepted = self._voice_cloning_accepted()
         button = self.nav_buttons[1]
         button.setObjectName("navButton" if accepted else "navButtonLocked")
-        button.setText("◉  Clonage de voix" if accepted else "🔒  Clonage de voix")
+        if accepted:
+            button.setIcon(QIcon())
+            button.setText("◉  Clonage de voix")
+        else:
+            button.setIcon(get_icon("lock"))
+            button.setText("Clonage de voix")
         button.setToolTip(
             "Cloner une voix locale"
             if accepted
@@ -1507,7 +1525,8 @@ class MainWindow(QMainWindow):
             self.gpu_diagnostics_button.setEnabled(True)
 
     def _build_tray(self) -> None:
-        icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
+        app_icon = get_app_icon()
+        icon = app_icon if not app_icon.isNull() else self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
         self.tray = QSystemTrayIcon(icon, self)
         self.tray.setToolTip("SoundMaster")
         menu = QMenu(self)
@@ -2071,7 +2090,7 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(0, reveal_after_layout)
         self.voice_profile_status.setText(
-            "Réglages avancés ouverts · ils sont enregistrés avec la voix"
+            "Réglages avancés ouverts · ils sont sauvegardés avec la voix"
             if visible
             else "Réglages avancés masqués · la voix reste inchangée"
         )
@@ -2133,7 +2152,7 @@ class MainWindow(QMainWindow):
             f"Voix « {profile.name} » chargée · écoutez son échantillon à l’étape 2"
             if self.voice_sample_player.has_source()
             else f"Voix « {profile.name} » chargée, mais son échantillon est introuvable. "
-            "Réenregistrez-le à l’étape 2."
+            "Recapturez-le à l'étape 2."
         )
         self.delete_voice_button.setEnabled(True)
 
@@ -2169,6 +2188,9 @@ class MainWindow(QMainWindow):
         self.voice_engine.setCurrentIndex(0)
         # A French application defaults to the French bundle: leaving it on the
         # engine default would silently clone with the English model.
+        self.voice_profile_status.setText(
+            "Nouvelle voix : donnez-lui un nom, puis capturez son échantillon à l'étape 2."
+        )
         self.voice_language.setCurrentIndex(max(0, self.voice_language.findData("French")))
         self.voice_high_quality.setChecked(False)
         self.voice_quantize.setChecked(False)
@@ -2176,9 +2198,6 @@ class MainWindow(QMainWindow):
         self.voice_speed.setValue(1.0)
         self.voice_top_p.setValue(0.9)
         self.voice_repetition_penalty.setValue(1.05)
-        self.voice_profile_status.setText(
-            "Nouvelle voix : donnez-lui un nom, puis enregistrez son échantillon à l’étape 2."
-        )
         self.delete_voice_button.setEnabled(False)
         self.voice_profile_name.setFocus()
 
@@ -2244,7 +2263,7 @@ class MainWindow(QMainWindow):
         name = self.voice_profile_name.text().strip()
         sample = Path(self.voice_sample.text().strip())
         if not name:
-            self.statusBar().showMessage("Donnez un nom à cette voix avant de l’enregistrer", 5000)
+            self.statusBar().showMessage("Donnez un nom à cette voix avant de la sauvegarder", 5000)
             self.voice_profile_name.setFocus()
             return
         if not sample.is_file():
@@ -2297,7 +2316,7 @@ class MainWindow(QMainWindow):
             if previous_sample is not None and previous_sample != sample:
                 self._cleanup_managed_voice_sample(previous_sample)
         if profile is None:
-            self.statusBar().showMessage("Impossible d’enregistrer cette voix", 6000)
+            self.statusBar().showMessage("Impossible de sauvegarder cette voix", 6000)
             return
         self._editing_voice_profile_id = profile.id
         self._refresh_voice_profiles()
@@ -2305,9 +2324,9 @@ class MainWindow(QMainWindow):
         if index >= 0:
             self.voice_profile_combo.setCurrentIndex(index)
         self.voice_profile_status.setText(
-            f"Voix « {profile.name} » enregistrée · réglages et échantillon gardés en local"
+            f"Voix « {profile.name} » sauvegardée · réglages et échantillon gardés en local"
         )
-        self.statusBar().showMessage(f"Voix « {profile.name} » enregistrée", 5000)
+        self.statusBar().showMessage(f"Voix « {profile.name} » sauvegardée", 5000)
 
     def _delete_voice_profile(self) -> None:
         profile_id = self.voice_profile_combo.currentData()
@@ -2709,8 +2728,8 @@ class MainWindow(QMainWindow):
         self.voice_generate_button.setEnabled(True)
         self.voice_test_button.setEnabled(True)
         self.voice_advanced_button.setEnabled(True)
-        self.voice_generate_button.setText("✨ Générer")
-        self.voice_test_button.setText("🎧 Tester la voix")
+        self.voice_generate_button.setText("Générer")
+        self.voice_test_button.setText("Tester la voix")
         if self._voice_generation_ok:
             self.voice_progress.setRange(0, 100)
             self.voice_progress.setValue(100)

@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
 
 from soundmaster.core.legal import LegalProfile
+from soundmaster.resources import get_settings_icon
 from soundmaster.ui.legal_settings import LegalSettingsWidget, SettingsWindow
 
 
@@ -36,7 +37,10 @@ class BootstrapWindow(QMainWindow):
 
         actions = QHBoxLayout()
         actions.addStretch(1)
-        settings_button = QPushButton("⚙ Paramètres")
+        settings_button = QPushButton("Paramètres")
+        settings_icon = get_settings_icon()
+        if not settings_icon.isNull():
+            settings_button.setIcon(settings_icon)
         settings_button.setToolTip("Ouvrir la conformité, les licences et les paramètres de l’application")
         settings_button.clicked.connect(self._open_settings)
         actions.addWidget(settings_button)

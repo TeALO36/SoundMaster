@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0 — 2026-08-11
+
+### Added
+
+- **Icône officielle de l’application.** SoundMaster s’équipe d’un logo haute définition au style audio studio / néon.
+- L’icône est désormais appliquée à la fenêtre PyQt6, aux raccourcis Windows, au menu de la zone de notification (system tray), à l’exécutable `SoundMaster.exe` et à l’installateur Inno Setup.
+
 ## 0.6.1 — 2026-08-10
 
 ### Changed
