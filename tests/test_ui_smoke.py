@@ -64,8 +64,9 @@ def test_main_window_builds_offscreen(qapp: QApplication, tmp_path: Path) -> Non
     assert window.voice_advanced.isHidden()
     # Qwen3-TTS leads by default as recommended engine.
     assert window.voice_engine.currentData() == "qwen3-tts"
-    assert window.voice_engine.itemData(1) == "pocket-tts"
-    assert window.voice_engine.itemData(2) == "omnivoice"
+    assert window.voice_engine.itemData(1) == "qwen3-tts-0.6b"
+    assert window.voice_engine.itemData(2) == "pocket-tts"
+    assert window.voice_engine.itemData(3) == "omnivoice"
     assert window.voice_model.text() == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     assert window.voice_reference_text.isEnabled()
     assert window.voice_progress.isHidden()
@@ -74,7 +75,7 @@ def test_main_window_builds_offscreen(qapp: QApplication, tmp_path: Path) -> Non
     assert window.favorite_selected_myinstants.isEnabled() is False
     assert window.bulk_download_progress.isHidden()
     assert window.voice_system_record_button.isEnabled() is True
-    window.voice_engine.setCurrentIndex(2)
+    window.voice_engine.setCurrentIndex(window.voice_engine.findData("omnivoice"))
     assert window.voice_model.text() == "k2-fsa/OmniVoice"
     assert window.voice_reference_text.isEnabled() is True
     assert "facultatif" in window.voice_reference_text.placeholderText().lower()

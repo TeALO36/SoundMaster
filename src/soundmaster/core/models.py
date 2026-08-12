@@ -47,6 +47,14 @@ MODEL_PROFILES: tuple[ModelProfile, ...] = (
         license_reference="https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base",
     ),
     ModelProfile(
+        key="qwen3-tts-0.6b",
+        repository="Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+        directory_name="Qwen3-TTS-12Hz-0.6B-Base",
+        purpose="Modèle léger Qwen 0.6B (rapide & empreinte réduite)",
+        approximate_storage="~1,2 Go avec tokenizer",
+        license_reference="https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+    ),
+    ModelProfile(
         key="qwen3-tts-tokenizer",
         repository="Qwen/Qwen3-TTS-Tokenizer-12Hz",
         directory_name="Qwen3-TTS-Tokenizer-12Hz",

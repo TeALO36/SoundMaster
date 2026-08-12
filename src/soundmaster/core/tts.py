@@ -18,7 +18,7 @@ from soundmaster.core.config import AppPaths
 from soundmaster.core.models import get_profile, model_path
 from soundmaster.core.pocket_mirror import configured_mirror, mirror_config
 
-SUPPORTED_ENGINE_KEYS = ("pocket-tts", "qwen3-tts", "omnivoice", "f5-tts")
+SUPPORTED_ENGINE_KEYS = ("pocket-tts", "qwen3-tts", "qwen3-tts-0.6b", "omnivoice", "f5-tts")
 
 
 def is_engine_runtime_installed(engine_key: str) -> bool:
@@ -31,7 +31,7 @@ def is_engine_runtime_installed(engine_key: str) -> bool:
             return True
         except ImportError:
             return False
-    if engine_key in ("qwen3-tts", "omnivoice", "f5-tts"):
+    if engine_key in ("qwen3-tts", "qwen3-tts-0.6b", "omnivoice", "f5-tts"):
         try:
             import torch  # noqa: F401
 

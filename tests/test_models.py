@@ -27,6 +27,7 @@ def _paths(tmp_path: Path) -> AppPaths:
 def test_public_model_profiles_have_hugging_face_repositories() -> None:
     assert {profile.key for profile in MODEL_PROFILES} == {
         "qwen3-tts",
+        "qwen3-tts-0.6b",
         "qwen3-tts-tokenizer",
         "omnivoice",
         "pocket-tts",
