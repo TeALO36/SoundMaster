@@ -4,6 +4,23 @@ from pathlib import Path
 from soundmaster.core import config
 
 
+def test_spec_bundles_the_zero_latency_audio_libraries() -> None:
+    """The packaged app must embed sounddevice AND soundfile.
+
+    soundfile decodes WAV/MP3/OGG/FLAC for the FastAudioEngine. If it is missing
+    from the bundle, every sound silently falls back to QMediaPlayer and the
+    playback latency regresses to ~2 s — exactly what happened before soundfile
+    was declared a base dependency and collected in the spec.
+    """
+
+    spec = Path("packaging/SoundMaster.spec").read_text(encoding="utf-8")
+    assert 'collect_all("sounddevice")' in spec
+    assert 'collect_all("soundfile")' in spec
+    assert "*soundfile_datas" in spec
+    assert "*soundfile_binaries" in spec
+    assert "*soundfile_hiddenimports" in spec
+
+
 def test_portable_mode_uses_executable_directory(monkeypatch, tmp_path: Path) -> None:
     executable_dir = tmp_path / "SoundMaster"
     executable_dir.mkdir()

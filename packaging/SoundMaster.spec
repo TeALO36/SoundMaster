@@ -10,10 +10,15 @@ ROOT = Path(SPECPATH).resolve().parent
 SRC = ROOT / "src"
 
 sounddevice_datas, sounddevice_binaries, sounddevice_hiddenimports = collect_all("sounddevice")
+# soundfile decodes WAV/MP3/OGG/FLAC for the zero-latency playback path. It is
+# collected explicitly (not just via PyInstaller's hook) so the packaged app can
+# never silently lose it and fall back to the slow QMediaPlayer path.
+soundfile_datas, soundfile_binaries, soundfile_hiddenimports = collect_all("soundfile")
 
 datas = [
     (str(SRC / "soundmaster" / "resources"), "soundmaster/resources"),
     *sounddevice_datas,
+    *soundfile_datas,
 ]
 
 hiddenimports = [
@@ -22,6 +27,7 @@ hiddenimports = [
     "soundmaster.__main__",
     "soundmaster.resources",
     *sounddevice_hiddenimports,
+    *soundfile_hiddenimports,
     *collect_submodules("soundmaster.core"),
     *collect_submodules("soundmaster.ui"),
 ]
@@ -29,7 +35,7 @@ hiddenimports = [
 analysis = Analysis(
     [str(SRC / "soundmaster" / "main.py")],
     pathex=[str(SRC)],
-    binaries=sounddevice_binaries,
+    binaries=[*sounddevice_binaries, *soundfile_binaries],
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
