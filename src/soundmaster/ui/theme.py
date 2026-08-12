@@ -366,6 +366,18 @@ QHeaderView::section {
 QTableWidget {
     gridline-color: #1c2920;
 }
+QTableWidget QPushButton, QPushButton#shortcutCaptureButton {
+    min-height: 24px;
+    max-height: 28px;
+    padding: 2px 10px;
+    margin: 2px 4px;
+    font-size: 12px;
+    border-radius: 5px;
+}
+QPushButton#shortcutCaptureButton:hover {
+    border-color: #6ed18a;
+    color: #baf4c7;
+}
 QToolTip {
     color: #eff8f0;
     background: #111a14;

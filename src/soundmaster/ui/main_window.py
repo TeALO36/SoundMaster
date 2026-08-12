@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -165,6 +166,7 @@ class ShortcutCaptureButton(QPushButton):
 
     def __init__(self, sequence: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName("shortcutCaptureButton")
         self.sequence = sequence.strip()
         self._recording = False
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -1280,14 +1282,18 @@ class MainWindow(QMainWindow):
         layout.addWidget(intro)
         self.keybind_table = QTableWidget(0, 4)
         self.keybind_table.setHorizontalHeaderLabels(("Son", "Source", "Raccourci", "Action"))
-        self.keybind_table.horizontalHeader().setStretchLastSection(False)
-        self.keybind_table.verticalHeader().setDefaultSectionSize(34)
-        self.keybind_table.verticalHeader().setMinimumSectionSize(34)
-        self.keybind_table.verticalHeader().setMaximumSectionSize(36)
-        self.keybind_table.setColumnWidth(0, 260)
-        self.keybind_table.setColumnWidth(1, 150)
-        self.keybind_table.setColumnWidth(2, 220)
-        self.keybind_table.setColumnWidth(3, 220)
+        header = self.keybind_table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        self.keybind_table.verticalHeader().setDefaultSectionSize(40)
+        self.keybind_table.verticalHeader().setMinimumSectionSize(36)
+        self.keybind_table.verticalHeader().setMaximumSectionSize(44)
+        self.keybind_table.setColumnWidth(1, 130)
+        self.keybind_table.setColumnWidth(2, 210)
+        self.keybind_table.setColumnWidth(3, 110)
         self.keybind_table.setAlternatingRowColors(True)
         layout.addWidget(self.keybind_table, 1)
         actions = QHBoxLayout()
