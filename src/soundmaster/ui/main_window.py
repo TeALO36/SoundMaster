@@ -1689,17 +1689,35 @@ class MainWindow(QMainWindow):
         audio_form.addRow("Microphone / entrée", self.microphone_input)
         audio_form.addRow("Sortie 1 — casque", self.headset_output)
         audio_form.addRow("Sortie 2 — câble virtuel", self.virtual_output)
+        # A virtual cable is only needed to route sounds into a game. When none
+        # is installed, the app says so and offers the official installer
+        # instead of leaving the user to figure out what VB-CABLE is.
+        self.virtual_cable_status = QLabel()
+        self.virtual_cable_status.setWordWrap(True)
+        audio_form.addRow(self.virtual_cable_status)
+        cable_actions = QHBoxLayout()
+        self.install_cable_button = QPushButton("Installer VB-CABLE (gratuit, officiel)")
+        self.install_cable_button.setObjectName("ghostButton")
+        self.install_cable_button.clicked.connect(self._open_virtual_cable_download)
+        self.refresh_devices_button = QPushButton("Actualiser les périphériques")
+        self.refresh_devices_button.setObjectName("ghostButton")
+        self.refresh_devices_button.clicked.connect(self._refresh_audio_devices)
+        cable_actions.addWidget(self.install_cable_button)
+        cable_actions.addWidget(self.refresh_devices_button)
+        cable_actions.addStretch(1)
+        audio_form.addRow(cable_actions)
         apply_audio = QPushButton("Appliquer et enregistrer")
         apply_audio.clicked.connect(self._apply_audio_devices)
         audio_form.addRow(apply_audio)
         hint = QLabel(
             "La sortie 2 sert à envoyer un son dans un jeu (via VB-CABLE ou équivalent). "
             "Rien n’est requis pour utiliser SoundMaster en local : laissez « Aucun (désactivé) » "
-            "si vous n’avez pas installé de câble virtuel."
+            "si vous n’avez pas besoin d’envoyer de son dans un jeu."
         )
         hint.setWordWrap(True)
         audio_form.addRow(hint)
         layout.addWidget(audio_group)
+        self._update_virtual_cable_status()
         gpu_group = QGroupBox("Diagnostic GPU et clonage vocal")
         gpu_group.setObjectName("gpuDiagnostics")
         gpu_layout = QVBoxLayout(gpu_group)
@@ -2119,6 +2137,59 @@ class MainWindow(QMainWindow):
                 index = combo.findText(default)
             if index >= 0:
                 combo.setCurrentIndex(index)
+
+    def _detect_virtual_cable(self) -> str | None:
+        """Return the description of the first virtual-cable output, if any.
+
+        VB-CABLE (and equivalents) name their devices with the word "Cable"
+        or "VB-Audio", so a plain keyword scan over the WASAPI output list is
+        enough to know whether the app should offer to install one.
+        """
+
+        if QMediaDevices is None:
+            return None
+        markers = ("cable", "vb-audio", "vb audio", "virtual", "voicemeeter")
+        for device in QMediaDevices.audioOutputs():
+            description = device.description()
+            lowered = description.lower()
+            if any(marker in lowered for marker in markers):
+                return description
+        return None
+
+    def _update_virtual_cable_status(self) -> None:
+        """Tell the user whether a virtual cable is installed, and offer the
+        official installer when it is not."""
+
+        cable = self._detect_virtual_cable()
+        if cable is None:
+            self.virtual_cable_status.setText(
+                "<b style='color:#b3261e'>Aucun câble virtuel détecté.</b> "
+                "Pour envoyer un son directement dans un jeu, installez un câble "
+                "virtuel (VB-CABLE, gratuit et officiel) puis cliquez sur "
+                "« Actualiser les périphériques » pour le faire apparaître ici."
+            )
+            self.install_cable_button.setVisible(True)
+        else:
+            self.virtual_cable_status.setText(
+                f"<b style='color:#137333'>Câble virtuel détecté : {cable}.</b> "
+                "Choisissez-le en « Sortie 2 » pour envoyer les sons dans un jeu."
+            )
+            self.install_cable_button.setVisible(False)
+
+    def _refresh_audio_devices(self) -> None:
+        """Re-scan the audio inputs/outputs after a driver or cable install."""
+
+        self.microphone_input.clear()
+        self.headset_output.clear()
+        self.virtual_output.clear()
+        self._populate_audio_devices()
+        self._update_virtual_cable_status()
+        self.statusBar().showMessage("Périphériques audio actualisés", 4000)
+
+    def _open_virtual_cable_download(self) -> None:
+        """Open the official VB-CABLE download page (free for personal use)."""
+
+        QDesktopServices.openUrl(QUrl("https://vb-audio.com/Cable/"))
 
     def _apply_audio_devices(self) -> None:
         if QAudioOutput is None or not self._audio_outputs:

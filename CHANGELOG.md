@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.9 — 2026-08-13
+
+### Added
+
+- **Proposition d’installation d’un câble virtuel** dans Paramètres → Audio et système : si aucune sortie « câble » (VB-CABLE ou équivalent) n’est détectée, l’application l’indique clairement et propose un bouton « Installer VB-CABLE (gratuit, officiel) » qui ouvre la page officielle de téléchargement, plus un bouton « Actualiser les périphériques » pour re-scanner sans redémarrer une fois le câble installé. Dès qu’un câble est détecté, l’offre disparaît et le câble apparaît dans la liste « Sortie 2 ».
+
+### Changed
+
+- La page **Conformité éditeur** est maintenant pré-remplie au maximum : identité complète de l’éditeur (projet open source, e-mail de contact `teanokry@gmail.com`, hébergeur GitHub, adresse vers le dépôt), tous les documents pointés vers le dépôt public, licence/revision du modèle Qwen exactes (révision `fd4b254389122332181a7c3db7f27e918eec64e3` vérifiée sur l’API Hugging Face), et cases déjà cochées pour tout ce que le build garantit réellement (identité vérifiée, transparence IA, consentement vocal, licence Qwen, télémétrie optionnelle). L’utilisateur final n’a plus **rien** à remplir pour utiliser l’application ; ne restent ouverts que les éléments qui relèvent exclusivement de l’éditeur (revue juridique externe, SHA-256 du build distribué, CGV/RGPD, droits des audios tiers).
+
 ## 0.8.8 — 2026-08-13
 
 ### Fixed

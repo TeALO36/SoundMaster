@@ -104,11 +104,12 @@ class LegalSettingsWidget(QWidget):
         intro = QLabel(
             "<h2>Conformité & commercialisation</h2>"
             "<p>Cette page est destinée à l’<b>éditeur</b> du logiciel, pas à l’utilisateur final. "
-            "SoundMaster étant un projet open source, elle est déjà pré-remplie avec l’identité "
-            "du projet et ses références (dépôt GitHub, licences des modèles). "
-            "Rien n’est à remplir pour simplement utiliser l’application. Elle ne constitue pas "
-            "une certification juridique : faites relire les documents par un professionnel "
-            "compétent avant toute vente ou redistribution.</p>"
+            "SoundMaster étant un projet open source, elle est <b>déjà pré-remplie</b> avec "
+            "l’identité du projet, son e-mail de contact, son dépôt GitHub et les licences des "
+            "modèles (Pocket TTS, Qwen3-TTS, OmniVoice, F5-TTS). <b>Rien n’est à remplir pour "
+            "utiliser l’application.</b> Seules les étapes de revue juridique et l’empreinte du "
+            "build distribué restent à valider par l’éditeur avant une éventuelle commercialisation. "
+            "Cette page ne constitue pas une certification juridique.</p>"
         )
         intro.setWordWrap(True)
         root.addWidget(intro)

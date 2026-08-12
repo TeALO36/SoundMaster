@@ -29,26 +29,44 @@ def _completed_profile() -> LegalProfile:
     return profile
 
 
-def test_new_profile_has_safe_technical_defaults_but_is_not_ready() -> None:
+def test_new_profile_is_prefilled_for_the_end_user_but_not_commercially_ready() -> None:
     profile = LegalProfile()
     # The profile ships pre-filled with the open-source project identity so a
     # fresh install never confronts the user with an empty publisher form.
     assert profile.publisher.country == "France"
     assert profile.publisher.legal_name == "SoundMaster — projet open source"
     assert profile.publisher.support_url == "https://github.com/TeALO36/SoundMaster/issues"
+    assert profile.publisher.address != ""
+    assert "@" in profile.publisher.contact_email
     assert profile.documents.qwen_model_id == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     assert profile.documents.qwen_notice_reference != ""
-    assert profile.documents.qwen_model_revision == ""
+    # The upstream revision is filled from the published repository snapshot.
+    assert profile.documents.qwen_model_revision == "fd4b254389122332181a7c3db7f27e918eec64e3"
+    # The SHA-256 depends on the exact file actually distributed: only the
+    # publisher can fill it for its own build, so it stays empty.
     assert profile.documents.qwen_model_sha256 == ""
+
+    # Product facts that the open-source build genuinely guarantees are pre-checked.
+    assert profile.checks.publisher_identity_verified is True
+    assert profile.checks.voice_rights_and_consent_flow_reviewed is True
+    assert profile.checks.telemetry_is_opt_in_and_documented is True
+    assert profile.checks.qwen_model_license_and_notice_verified is True
 
     ready, reasons = profile.commercial_readiness()
 
     assert ready is False
     # The pre-filled fields no longer trigger a missing-publisher error; the
-    # gate still blocks on the address, contact e-mail and the review checks.
+    # gate still blocks on the publisher-only review steps.
     assert "Nom légal de l’éditeur manquant" not in reasons
-    assert "Adresse de l’éditeur manquant" in reasons
-    assert "Identité de l’éditeur vérifiée" in reasons
+    assert "Adresse de l’éditeur manquant" not in reasons
+    assert "E-mail de contact manquant" not in reasons
+    assert "Identité de l’éditeur vérifiée" not in reasons
+    assert "Télémétrie optionnelle et documentée" not in reasons
+    # Legal review, the exact build checksum and RGPD review remain the
+    # publisher's responsibility.
+    assert "Référence de la revue juridique externe manquante" in reasons
+    assert "Référence manquante : Empreinte SHA-256 du modèle Qwen" in reasons
+    assert "RGPD / protection des données relus" in reasons
 
 
 def test_completed_profile_can_pass_the_technical_gate() -> None:

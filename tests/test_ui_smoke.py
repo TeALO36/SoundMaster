@@ -2,6 +2,7 @@ import os
 import threading
 import time
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -1196,6 +1197,98 @@ def test_engine_fallback_uses_the_first_installed_alternative(
     if window._voice_thread is not None:
         window._voice_thread.quit()
         window._voice_thread.wait(2000)
+    window._allow_close = True
+    window.close()
+
+
+class _FakeAudioDevice:
+    """Minimal QAudioDevice stand-in carrying just a description."""
+
+    def __init__(self, description: str) -> None:
+        self._description = description
+
+    def description(self) -> str:
+        return self._description
+
+
+class _FakeMediaDevices:
+    """QMediaDevices stand-in so the audio tab can run headless."""
+
+    inputs: ClassVar[list[_FakeAudioDevice]] = []
+    outputs: ClassVar[list[_FakeAudioDevice]] = []
+
+    @staticmethod
+    def audioInputs():
+        return _FakeMediaDevices.inputs
+
+    @staticmethod
+    def audioOutputs():
+        return _FakeMediaDevices.outputs
+
+    @staticmethod
+    def defaultAudioOutput():
+        return _FakeMediaDevices.outputs[0] if _FakeMediaDevices.outputs else _FakeAudioDevice("")
+
+
+def test_audio_tab_offers_to_install_a_virtual_cable_when_none_is_detected(
+    qapp: QApplication, tmp_path: Path, monkeypatch
+) -> None:
+    """With no cable installed the settings must propose the official installer
+    instead of silently leaving the second output disabled."""
+
+    import soundmaster.ui.main_window as main_window_module
+
+    _FakeMediaDevices.inputs = []
+    _FakeMediaDevices.outputs = [_FakeAudioDevice("Casque (Realtek)")]
+    monkeypatch.setattr(main_window_module, "QMediaDevices", _FakeMediaDevices)
+
+    window = _unlocked_window(tmp_path)
+    assert "Aucun câble virtuel détecté" in window.virtual_cable_status.text()
+    assert window.install_cable_button.isHidden() is False
+
+    # The button opens the official, free VB-CABLE download page.
+    opened: list[str] = []
+
+    class _FakeDesktopServices:
+        @staticmethod
+        def openUrl(url) -> None:
+            opened.append(url.toString())
+
+    monkeypatch.setattr(main_window_module, "QDesktopServices", _FakeDesktopServices)
+    window.install_cable_button.click()
+    assert opened == ["https://vb-audio.com/Cable/"]
+
+    window._allow_close = True
+    window.close()
+
+
+def test_audio_tab_detects_a_cable_and_refreshes_after_install(
+    qapp: QApplication, tmp_path: Path, monkeypatch
+) -> None:
+    """Once VB-CABLE is installed, "Actualiser les périphériques" must pick the
+    cable up, hide the install offer, and surface it in the Sortie 2 list."""
+
+    import soundmaster.ui.main_window as main_window_module
+
+    _FakeMediaDevices.inputs = []
+    _FakeMediaDevices.outputs = [_FakeAudioDevice("Casque (Realtek)")]
+    monkeypatch.setattr(main_window_module, "QMediaDevices", _FakeMediaDevices)
+
+    window = _unlocked_window(tmp_path)
+    assert "Aucun câble virtuel détecté" in window.virtual_cable_status.text()
+
+    # The user installs VB-CABLE while the app is running, then refreshes.
+    _FakeMediaDevices.outputs = [
+        _FakeAudioDevice("CABLE Input (VB-Audio Virtual Cable)"),
+        _FakeAudioDevice("Casque (Realtek)"),
+    ]
+    window._refresh_audio_devices()
+
+    assert "Câble virtuel détecté" in window.virtual_cable_status.text()
+    assert window.install_cable_button.isHidden() is True
+    assert window.virtual_output.findText("CABLE Input (VB-Audio Virtual Cable)") >= 0
+    assert "Périphériques audio actualisés" in window.statusBar().currentMessage()
+
     window._allow_close = True
     window.close()
 
