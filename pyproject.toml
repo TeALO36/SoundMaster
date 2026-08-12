@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soundmaster"
-version = "0.8.5"
+version = "0.8.6"
 description = "A local-first Windows soundboard for gamers."
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -14,6 +14,7 @@ dependencies = [
     "PyQt6>=6.7,<7",
     "huggingface_hub>=0.30,<1",
     "keyboard>=0.13,<1",
+    "numpy>=1.26,<3",
     "sounddevice>=0.5,<1",
 ]
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.6 — 2026-08-12
+
+### Fixed
+
+- Declared NumPy as a runtime dependency for the low-latency audio engine so clean Windows release environments can run the test suite and build successfully.
+- Kept the release workflow compatible with the existing `v0.8.2`–`v0.8.5` tags, allowing their Windows artifacts to be republished.
+
 ## 0.7.0 — 2026-08-11
 
 ### Added
