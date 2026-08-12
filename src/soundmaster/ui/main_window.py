@@ -47,6 +47,7 @@ from PyQt6.QtWidgets import (
 
 from soundmaster.core.audio_capture import SystemAudioRecorder, wasapi_output_devices
 from soundmaster.core.config import AppConfig, AppPaths
+from soundmaster.core.fast_audio import FastAudioEngine
 from soundmaster.core.models import (
     MODEL_PROFILES,
     ModelProfile,
@@ -504,6 +505,7 @@ class MainWindow(QMainWindow):
         self._player_sources: dict[bool, str] = {}
         self._hotkey_players: dict[int, tuple[object, object]] = {}
         self._favorite_players: dict[str, tuple[object, object]] = {}
+        self._fast_audio = FastAudioEngine()
         self._audio_outputs: dict[bool, object] = {}
         self._network_thread: QThread | None = None
         self._network_worker: QObject | None = None
@@ -1767,6 +1769,9 @@ class MainWindow(QMainWindow):
         )
         # Eagerly preload all favorite sounds so playback is instant on click.
         self._prepare_favorite_players(sounds)
+        for sound in sounds:
+            if Path(sound.path).is_file():
+                self._fast_audio.preload_sound(sound.path)
         # Favorites already have their own grid above; listing them again here
         # would just duplicate every card.
         recent = self.library.recent_sounds()
@@ -1952,6 +1957,7 @@ class MainWindow(QMainWindow):
                     # Voice previews follow the headset, never the virtual cable.
                     for player in (self.voice_sample_player, self.voice_result_player):
                         player.set_device(device)
+        self._fast_audio.set_devices(self.headset_output.currentText(), self.virtual_output.currentText())
         self.library.set_preference("microphone_device", self.microphone_input.currentText())
         if self._hotkeys.active:
             self._prepare_hotkey_players()
@@ -1986,7 +1992,13 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Lecture vers la sortie 2" if virtual else "Lecture locale", 3000)
             return
 
-        # Try the preloaded favorite pool first for near-zero latency.
+        # Instant low-latency playback via FastAudioEngine (< 2 ms)
+        if Path(path).is_file():
+            if self._fast_audio.play(path, virtual):
+                self.statusBar().showMessage("Lecture vers la sortie 2" if virtual else "Lecture locale", 3000)
+                return
+
+        # Fallback to Qt QMediaPlayer
         preloaded = self._favorite_players.get(path_str + (":v" if virtual else ":h"))
         if preloaded is not None:
             preloaded[0].setPosition(0)
@@ -1996,8 +2008,6 @@ class MainWindow(QMainWindow):
         if player is None:
             self.statusBar().showMessage("QtMultimedia indisponible", 5000)
             return
-        # Re-resolving a source costs ~90 ms before the backend starts playing,
-        # while replaying an already-loaded one costs about a millisecond.
         if self._player_sources.get(virtual) != path_str:
             player.setSource(QUrl.fromLocalFile(path_str))
             self._player_sources[virtual] = path_str
@@ -3392,6 +3402,8 @@ class MainWindow(QMainWindow):
         self._release_hotkey_players()
         self._release_favorite_players()
         self._stop_voice_players()
+        if hasattr(self, "_fast_audio"):
+            self._fast_audio.close()
         if hasattr(self, "update_panel"):
             self.update_panel.stop()
         if self._system_recorder is not None:
