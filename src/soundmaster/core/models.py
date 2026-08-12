@@ -31,11 +31,19 @@ class ModelProfile:
 
 MODEL_PROFILES: tuple[ModelProfile, ...] = (
     ModelProfile(
+        key="pocket-tts",
+        repository="kyutai/pocket-tts",
+        directory_name="pocket-tts",
+        purpose="Clonage vocal ultra-rapide sur CPU (100M paramètres, Kyutai)",
+        approximate_storage="~300 Mo",
+        license_reference="https://huggingface.co/kyutai/pocket-tts",
+    ),
+    ModelProfile(
         key="qwen3-tts",
         repository="Qwen/Qwen3-TTS-12Hz-1.7B-Base",
         directory_name="Qwen3-TTS-12Hz-1.7B-Base",
-        purpose="Clonage vocal zero-shot / génération vocale Qwen3-TTS",
-        approximate_storage="Plusieurs Go avec le tokenizer et les variantes futures",
+        purpose="Haute qualité audio 1.7B (Qwen / Alibaba)",
+        approximate_storage="~3,5 Go avec tokenizer",
         license_reference="https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base",
     ),
     ModelProfile(
@@ -43,24 +51,24 @@ MODEL_PROFILES: tuple[ModelProfile, ...] = (
         repository="Qwen/Qwen3-TTS-Tokenizer-12Hz",
         directory_name="Qwen3-TTS-Tokenizer-12Hz",
         purpose="Tokenizer audio requis par Qwen3-TTS",
-        approximate_storage="Quelques centaines de Mo à plusieurs Go selon la révision",
+        approximate_storage="~400 Mo",
         license_reference="https://huggingface.co/Qwen/Qwen3-TTS-Tokenizer-12Hz",
     ),
     ModelProfile(
         key="omnivoice",
         repository="k2-fsa/OmniVoice",
         directory_name="OmniVoice",
-        purpose="Alternative locale multilingue pour clonage vocal zero-shot",
-        approximate_storage="Plusieurs Go selon les fichiers de la révision",
+        purpose="Clonage multilingue avec ASR automatique (k2-fsa)",
+        approximate_storage="~2,2 Go",
         license_reference="https://huggingface.co/k2-fsa/OmniVoice",
     ),
     ModelProfile(
-        key="pocket-tts",
-        repository="kyutai/pocket-tts",
-        directory_name="pocket-tts",
-        purpose="Clonage vocal rapide sur CPU (100M paramètres, Kyutai)",
-        approximate_storage="Quelques centaines de Mo",
-        license_reference="https://huggingface.co/kyutai/pocket-tts",
+        key="f5-tts",
+        repository="SWAC/F5-TTS",
+        directory_name="F5-TTS",
+        purpose="Clonage expressif avec émotions textuelles (ex: [sad], [happy])",
+        approximate_storage="~1,8 Go",
+        license_reference="https://huggingface.co/SWAC/F5-TTS",
     ),
 )
 
@@ -91,6 +99,48 @@ def model_path(profile: ModelProfile, paths: AppPaths) -> Path:
 def is_downloaded(profile: ModelProfile, paths: AppPaths) -> bool:
     directory = model_path(profile, paths)
     return directory.is_dir() and any(directory.iterdir())
+
+
+def model_size_bytes(profile: ModelProfile, paths: AppPaths) -> int:
+    """Calculate total size on disk for a downloaded model in bytes."""
+
+    directory = model_path(profile, paths)
+    if not (directory.is_dir() and any(directory.iterdir())):
+        return 0
+    total = 0
+    try:
+        for file in directory.rglob("*"):
+            if file.is_file():
+                total += file.stat().st_size
+    except OSError:
+        pass
+    return total
+
+
+def model_size_str(profile: ModelProfile, paths: AppPaths) -> str:
+    """Return a human-readable size for a downloaded model."""
+
+    bytes_size = model_size_bytes(profile, paths)
+    if bytes_size <= 0:
+        return "Non installé"
+    if bytes_size >= 1024**3:
+        return f"{bytes_size / (1024**3):.1f} Go"
+    return f"{bytes_size / (1024**2):.0f} Mo"
+
+
+def delete_model(profile: ModelProfile, paths: AppPaths) -> bool:
+    """Remove a local model directory to free disk space."""
+
+    import shutil
+
+    directory = model_path(profile, paths)
+    if directory.is_dir():
+        try:
+            shutil.rmtree(directory)
+            return True
+        except OSError:
+            return False
+    return False
 
 
 def download_model(profile: ModelProfile, paths: AppPaths) -> Path:

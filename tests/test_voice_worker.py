@@ -50,15 +50,15 @@ def test_voice_worker_emits_frozen_generation_metadata(qapp: QApplication, tmp_p
 
     worker.run()
 
-    assert received == [
-        (
-            str(tmp_path / "voice.wav"),
-            "omnivoice",
-            "k2-fsa/OmniVoice",
-            "Bonjour",
-            "sample.wav",
-        )
-    ]
+    assert len(received) == 1
+    assert received[0][:5] == (
+        str(tmp_path / "voice.wav"),
+        "omnivoice",
+        "k2-fsa/OmniVoice",
+        "Bonjour",
+        "sample.wav",
+    )
+    assert isinstance(received[0][5], float) and received[0][5] >= 0.0
 
 
 class AdvancedFakeVoiceService:

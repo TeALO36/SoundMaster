@@ -18,7 +18,7 @@ from soundmaster.core.config import AppPaths
 from soundmaster.core.models import get_profile, model_path
 from soundmaster.core.pocket_mirror import configured_mirror, mirror_config
 
-SUPPORTED_ENGINE_KEYS = ("pocket-tts", "qwen3-tts", "omnivoice")
+SUPPORTED_ENGINE_KEYS = ("pocket-tts", "qwen3-tts", "omnivoice", "f5-tts")
 
 # Pocket TTS ships one bundle per language inside the same repository and picks
 # it through ``load_model(language=...)``. The bundles are NOT uniform, so this
@@ -235,6 +235,8 @@ class QwenVoiceService:
                     if settings
                     else self._generate_omnivoice(model, text, ref_audio, ref_text)
                 )
+            elif engine_key == "f5-tts":
+                audio, sample_rate = self._generate_f5tts(model, text, ref_audio, ref_text, settings)
             else:
                 if not ref_text:
                     ref_text = self._auto_transcribe(ref_audio, language)

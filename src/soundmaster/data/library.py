@@ -28,6 +28,7 @@ class VoiceGeneration:
     output_path: str
     model: str
     created_at: str
+    duration_seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,19 +95,34 @@ class SoundLibrary:
                 sample_path TEXT NOT NULL,
                 output_path TEXT NOT NULL,
                 model TEXT NOT NULL,
+                duration_seconds REAL DEFAULT 0.0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
-            INSERT INTO schema_meta(key, value) VALUES ('version', '4')
+            INSERT INTO schema_meta(key, value) VALUES ('version', '5')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value;
             """
         )
         self._migrate_voice_profiles_sample_paths()
+        self._migrate_voice_generations_duration()
         self._connection.execute(
             "INSERT INTO schema_meta(key, value) VALUES ('version', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (str(self.SCHEMA_VERSION),),
         )
         self._connection.commit()
+
+    def _migrate_voice_generations_duration(self) -> None:
+        """Add duration_seconds column to voice_generations if missing."""
+
+        columns = [
+            str(col["name"])
+            for col in self._connection.execute("PRAGMA table_info('voice_generations')").fetchall()
+        ]
+        if "duration_seconds" not in columns:
+            self._connection.execute(
+                "ALTER TABLE voice_generations ADD COLUMN duration_seconds REAL DEFAULT 0.0"
+            )
+            self._connection.commit()
 
     def _migrate_voice_profiles_sample_paths(self) -> None:
         """Remove the legacy one-profile-per-sample constraint."""
@@ -350,11 +366,25 @@ class SoundLibrary:
         return int(row["count"]) if row is not None else 0
 
     def add_voice_generation(
-        self, title: str, text: str, sample_path: Path, output_path: Path, model: str
+        self,
+        title: str,
+        text: str,
+        sample_path: Path,
+        output_path: Path,
+        model: str,
+        duration_seconds: float = 0.0,
     ) -> VoiceGeneration:
         cursor = self._connection.execute(
-            "INSERT INTO voice_generations(title, text, sample_path, output_path, model) VALUES (?, ?, ?, ?, ?)",
-            (title.strip() or "Voix générée", text, str(sample_path), str(output_path), model),
+            "INSERT INTO voice_generations(title, text, sample_path, output_path, model, duration_seconds) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                title.strip() or "Voix générée",
+                text,
+                str(sample_path),
+                str(output_path),
+                model,
+                float(duration_seconds),
+            ),
         )
         self._connection.commit()
         row = self._connection.execute(
@@ -362,6 +392,18 @@ class SoundLibrary:
         ).fetchone()
         assert row is not None
         return self._voice_generation(row)
+
+    def avg_generation_time(self, model: str) -> float | None:
+        """Return the average generation time in seconds for a given model."""
+
+        row = self._connection.execute(
+            "SELECT AVG(duration_seconds) AS avg_time FROM voice_generations "
+            "WHERE model = ? AND duration_seconds > 0.05",
+            (model,),
+        ).fetchone()
+        if row is None or row["avg_time"] is None:
+            return None
+        return float(row["avg_time"])
 
     def voice_generations(self, query: str = "") -> list[VoiceGeneration]:
         if query.strip():
@@ -409,6 +451,12 @@ class SoundLibrary:
 
     @staticmethod
     def _voice_generation(row: sqlite3.Row) -> VoiceGeneration:
+        duration = 0.0
+        try:
+            if "duration_seconds" in row.keys() and row["duration_seconds"] is not None:
+                duration = float(row["duration_seconds"])
+        except (KeyError, ValueError, TypeError):
+            duration = 0.0
         return VoiceGeneration(
             id=int(row["id"]),
             title=str(row["title"]),
@@ -417,4 +465,5 @@ class SoundLibrary:
             output_path=str(row["output_path"]),
             model=str(row["model"]),
             created_at=str(row["created_at"]),
+            duration_seconds=duration,
         )

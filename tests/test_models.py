@@ -30,6 +30,7 @@ def test_public_model_profiles_have_hugging_face_repositories() -> None:
         "qwen3-tts-tokenizer",
         "omnivoice",
         "pocket-tts",
+        "f5-tts",
     }
     assert all("/" in profile.repository for profile in MODEL_PROFILES)
     assert get_profile("pocket-tts").repository == "kyutai/pocket-tts"

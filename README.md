@@ -109,17 +109,14 @@ Les poids capables d’**imiter votre échantillon** sont dans un dépôt Huggin
 accès contrôlé. Sans autorisation, Pocket TTS se rabat silencieusement sur une version
 qui ne sait lire que son propre catalogue de voix, et le clonage échoue. Deux options.
 
-**Option A — le miroir livré (par défaut, rien à faire).** SoundMaster télécharge
-déjà les poids depuis [`TeALO/pocket-tts-soundmaster`](https://huggingface.co/TeALO/pocket-tts-soundmaster),
-un miroir public : **aucun compte, aucune condition à accepter sur un site tiers.**
-Vérifié sans jeton et avec un cache vide.
+**Option A — miroir public ou officiel.** SoundMaster peut télécharger les poids depuis un miroir public ou un dépôt de votre choix : **aucun compte ni jeton nécessaire.**
 
 Pourquoi c’est permis : Pocket TTS est sous licence **CC-BY-4.0**, qui autorise
 explicitement la redistribution et l’usage commercial à condition de créditer
 l’auteur et de joindre la licence. Le verrou est une couche d’accès que Kyutai
 ajoute sur sa propre copie, pas une restriction de la licence.
 
-Pour publier votre propre miroir à la place, une seule commande, à lancer une fois
+Pour publier un miroir, une seule commande à lancer une fois
 par le développeur — jamais par les utilisateurs :
 
 ```bat
@@ -128,10 +125,8 @@ par le développeur — jamais par les utilisateurs :
 ```
 
 Le script copie les poids sans les modifier et écrit la carte de modèle avec
-l’attribution à Kyutai, la licence et la charte d’usage. Indiquez ensuite le miroir
-dans **Paramètres → Clonage de voix → Source du modèle**, ou fixez
-`DEFAULT_MIRROR_REPO` dans `src/soundmaster/core/pocket_mirror.py` pour que ce soit
-le comportement livré par défaut.
+l’attribution à Kyutai, la licence et la charte d’usage. Vous pouvez fixer la variable
+d'environnement `SOUNDMASTER_POCKET_MIRROR` ou `DEFAULT_MIRROR_REPO` dans `src/soundmaster/core/pocket_mirror.py`.
 
 Deux obligations vous incombent alors, et l’application les assume déjà :
 l’**attribution** (affichée sous les conditions d’utilisation) et la **charte d’usage**

@@ -45,9 +45,12 @@ def test_library_persists_favorites_history_and_keybinds(tmp_path: Path) -> None
     reopened.set_preference("minimize_to_tray", "true")
     assert reopened.preference("minimize_to_tray") == "true"
     generation = reopened.add_voice_generation(
-        "Test voice", "Hello", audio, tmp_path / "generated.wav", "local-test"
+        "Test voice", "Hello", audio, tmp_path / "generated.wav", "pocket-tts", duration_seconds=3.5
     )
     assert reopened.voice_generations("hello")[0].id == generation.id
+    assert reopened.voice_generations("hello")[0].duration_seconds == 3.5
+    assert reopened.avg_generation_time("pocket-tts") == 3.5
+    assert reopened.avg_generation_time("nonexistent") is None
 
     profile = reopened.add_voice_profile(
         "Discord voice",

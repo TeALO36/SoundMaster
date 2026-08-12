@@ -28,7 +28,7 @@ flow_lm:
 
 
 def test_repo_identifiers_are_validated() -> None:
-    assert is_valid_repo_id("TeALO36/pocket-tts-soundmaster") is True
+    assert is_valid_repo_id("mon-compte/pocket-tts-soundmaster") is True
     assert is_valid_repo_id("kyutai/pocket-tts") is True
     assert is_valid_repo_id("pas-de-slash") is False
     assert is_valid_repo_id("trop/de/slashs") is False
