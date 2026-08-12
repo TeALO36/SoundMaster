@@ -62,13 +62,12 @@ def test_main_window_builds_offscreen(qapp: QApplication, tmp_path: Path) -> Non
     assert window.voice_advanced_button.isChecked() is False
     assert window.voice_advanced.isVisible() is False
     assert window.voice_advanced.isHidden()
-    # Pocket TTS leads: it is the fast CPU engine and needs no transcript.
-    assert window.voice_engine.currentData() == "pocket-tts"
-    assert window.voice_engine.itemData(1) == "qwen3-tts"
+    # Qwen3-TTS leads by default as recommended engine.
+    assert window.voice_engine.currentData() == "qwen3-tts"
+    assert window.voice_engine.itemData(1) == "pocket-tts"
     assert window.voice_engine.itemData(2) == "omnivoice"
-    assert window.voice_model.text() == "kyutai/pocket-tts"
-    assert window.voice_reference_text.isEnabled() is False
-    assert "inutile" in window.voice_reference_text.placeholderText().lower()
+    assert window.voice_model.text() == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+    assert window.voice_reference_text.isEnabled()
     assert window.voice_progress.isHidden()
     assert window.search_progress.isHidden()
     assert window.download_group.isHidden()
@@ -937,6 +936,8 @@ def test_pocket_only_controls_hide_for_the_other_engines(
     window.voice_advanced_button.setChecked(True)
     qapp.processEvents()
 
+    window.voice_engine.setCurrentIndex(window.voice_engine.findData("pocket-tts"))
+    qapp.processEvents()
     assert window.voice_engine.currentData() == "pocket-tts"
     assert window.voice_high_quality.isVisibleTo(window) is True
     assert window.voice_quantize.isVisibleTo(window) is True

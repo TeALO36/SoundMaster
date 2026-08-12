@@ -71,6 +71,7 @@ from soundmaster.core.pocket_mirror import (
 from soundmaster.core.tts import (
     QwenVoiceService,
     VoiceGenerationError,
+    is_engine_runtime_installed,
     pocket_has_quality_variant,
 )
 from soundmaster.data.library import SoundItem, SoundLibrary
@@ -1040,13 +1041,17 @@ class MainWindow(QMainWindow):
         advanced_form.setHorizontalSpacing(12)
         advanced_form.setVerticalSpacing(8)
         self.voice_engine = QComboBox()
-        self.voice_engine.addItem("Pocket TTS — rapide, sans GPU (recommandé)", "pocket-tts")
-        self.voice_engine.addItem("Qwen3-TTS — qualité maximale", "qwen3-tts")
+        self.voice_engine.addItem("Qwen3-TTS — qualité maximale (recommandé)", "qwen3-tts")
+        self.voice_engine.addItem("Pocket TTS — rapide, sans GPU", "pocket-tts")
         self.voice_engine.addItem("OmniVoice — multilingue", "omnivoice")
         self.voice_engine.addItem("F5-TTS — expressif & émotions textuelles", "f5-tts")
         self.voice_engine.setToolTip(
             "Choisissez le moteur vocal. F5-TTS permet de contrôler les émotions par des balises [sad], [happy], etc."
         )
+        default_engine = self.library.preference("default_voice_engine", "qwen3-tts")
+        default_idx = self.voice_engine.findData(default_engine)
+        if default_idx >= 0:
+            self.voice_engine.setCurrentIndex(default_idx)
         self.voice_engine.currentIndexChanged.connect(self._voice_engine_changed)
         advanced_form.addWidget(QLabel("Moteur vocal"), 0, 0)
         advanced_form.addWidget(self.voice_engine, 0, 1)
@@ -2409,7 +2414,9 @@ class MainWindow(QMainWindow):
         self.voice_profile_name.clear()
         self._set_voice_sample(None)
         self.voice_reference_text.clear()
-        self.voice_engine.setCurrentIndex(0)
+        default_engine = self.library.preference("default_voice_engine", "qwen3-tts")
+        default_index = self.voice_engine.findData(default_engine)
+        self.voice_engine.setCurrentIndex(default_index if default_index >= 0 else 0)
         # A French application defaults to the French bundle: leaving it on the
         # engine default would silently clone with the English model.
         self.voice_profile_status.setText(
@@ -2851,7 +2858,20 @@ class MainWindow(QMainWindow):
         )
         self._voice_test_mode = test_mode
         self._voice_thread = QThread(self)
-        self._active_voice_engine = str(self.voice_engine.currentData() or "qwen3-tts")
+        requested_engine = str(self.voice_engine.currentData() or "qwen3-tts")
+        if not is_engine_runtime_installed(requested_engine):
+            fallback_engine = "qwen3-tts" if is_engine_runtime_installed("qwen3-tts") else "omnivoice"
+            if requested_engine != fallback_engine:
+                self.statusBar().showMessage(
+                    f"Runtime {requested_engine} indisponible — bascule automatique sur {fallback_engine}.",
+                    7000,
+                )
+                idx = self.voice_engine.findData(fallback_engine)
+                if idx >= 0:
+                    self.voice_engine.setCurrentIndex(idx)
+                requested_engine = fallback_engine
+
+        self._active_voice_engine = requested_engine
         settings = self._voice_settings()
         self._voice_worker = VoiceWorker(
             self._voice_service,

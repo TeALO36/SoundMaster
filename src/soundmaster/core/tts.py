@@ -20,6 +20,26 @@ from soundmaster.core.pocket_mirror import configured_mirror, mirror_config
 
 SUPPORTED_ENGINE_KEYS = ("pocket-tts", "qwen3-tts", "omnivoice", "f5-tts")
 
+
+def is_engine_runtime_installed(engine_key: str) -> bool:
+    """Check if the python runtime dependencies for the engine are installed."""
+
+    if engine_key == "pocket-tts":
+        try:
+            import pocket_tts  # noqa: F401
+
+            return True
+        except ImportError:
+            return False
+    if engine_key in ("qwen3-tts", "omnivoice", "f5-tts"):
+        try:
+            import torch  # noqa: F401
+
+            return True
+        except ImportError:
+            return False
+    return False
+
 # Pocket TTS ships one bundle per language inside the same repository and picks
 # it through ``load_model(language=...)``. The bundles are NOT uniform, so this
 # table mirrors what the runtime actually publishes rather than assuming a
