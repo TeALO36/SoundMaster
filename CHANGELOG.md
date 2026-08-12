@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.8 — 2026-08-13
+
+### Fixed
+
+- **L’application installée demandait d’installer le modèle OmniVoice alors que Pocket TTS est le moteur par défaut** : le binaire publié n’embarquait pas `pocket_tts` (l’extra `pocket` n’était pas installé au moment du build), donc le moteur par défaut semblait absent, et le repli automatique basculait silencieusement sur OmniVoice — dont le modèle n’est pas téléchargé non plus. Le spec PyInstaller collecte désormais `pocket_tts` explicitement, `setup_env.bat` et le workflow de release installent l’extra `pocket`, et le repli de génération ne bascule plus **jamais** vers un moteur dont le runtime n’est pas installé : si aucun moteur n’est disponible, l’application explique clairement lequel manque au lieu de demander un modèle étranger.
+- **La molette de la souris changeait la sélection des listes (modèle, langue…) quand le curseur passait dessus** : en scrollant la page, survoler un menu déroulant faisait défiler ses options sans que l’utilisateur ne le demande. Les listes déroulantes ignorent désormais la molette quand leur popup est fermée — la molette continue de faire défiler la page.
+- **Le bouton « ■ Stop » restait affiché à l’infini après la fin d’un son** (tableau de bord, favoris) : ces sons passent par le moteur audio zéro-latence, dont le flux persistant ne signalait jamais la fin de lecture — seule la bascule QMediaPlayer le faisait. Le moteur notifie désormais la fin de la file de lecture (callback transmis au thread UI par signal Qt), le bouton revient à « ▶ Tester », et « ■ Stop » arrête aussi réellement le moteur zéro-latence (pas seulement le lecteur de secours).
+
+### Validation
+
+- 127 tests automatisés passent, dont 7 nouveaux : le spec embarque le moteur par défaut, le repli ne bascule jamais vers un moteur sans runtime, le repli choisit la première alternative réellement installée, les listes déroulantes ignorent la molette, la fin de lecture libère l’état « Stop », « Stop » arrête bien le moteur zéro-latence, et le moteur signale la fin sans la déclencher sur un arrêt manuel.
+
 ## 0.8.7 — 2026-08-12
 
 ### Fixed

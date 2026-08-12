@@ -54,7 +54,9 @@ call "%VENV_DIR%\Scripts\activate.bat"
 python -m pip install --upgrade pip
 if errorlevel 1 exit /b 1
 
-python -m pip install -e ".[dev,build]"
+rem The `pocket` extra is part of the default install: pocket_tts is the
+rem default voice engine and must be present for cloning to work at all.
+python -m pip install -e ".[dev,build,pocket]"
 if errorlevel 1 (
     echo Failed to install SoundMaster dependencies.
     exit /b 1

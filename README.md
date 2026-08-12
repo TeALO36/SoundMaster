@@ -182,6 +182,8 @@ recharge rien.
 
 Les moteurs Qwen3-TTS et OmniVoice restent disponibles dans **Réglages avancés** pour une qualité maximale. Ceux-là ont besoin d’une transcription de l’échantillon : SoundMaster la produit automatiquement en local avec Faster-Whisper, et le champ **Transcription** ne sert qu’à la saisir à la main si besoin.
 
+Pocket TTS (le moteur par défaut) fait partie de l’installation de base (`setup_env.bat` installe l’extra `pocket`) et est embarqué dans les builds publiés.
+
 Pour une installation CPU, après `setup_env.bat`, installez ces runtimes plus lourds dans l’environnement virtuel :
 
 ```bat

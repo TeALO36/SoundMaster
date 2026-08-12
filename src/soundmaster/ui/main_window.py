@@ -228,6 +228,22 @@ class EmotionTextEdit(QTextEdit):
             self.selection_finished.emit()
 
 
+class WheelScrollComboBox(QComboBox):
+    """QComboBox that ignores mouse-wheel events while the popup is closed.
+
+    Without this, hovering a combo box (the model list, the language picker)
+    while scrolling the page silently changes the selected item — the user
+    scrolls the page and the language flips under the cursor. The wheel event
+    is ignored so it propagates to the enclosing scroll area instead.
+    """
+
+    def wheelEvent(self, event) -> None:
+        if not self.view().isVisible():
+            event.ignore()
+            return
+        super().wheelEvent(event)
+
+
 class ShortcutCaptureButton(QPushButton):
     """Button that records one keyboard combination when the user presses it."""
 
@@ -565,6 +581,9 @@ class MainWindow(QMainWindow):
     """Full French application shell with embedded local workflows."""
 
     hotkey_play_requested = pyqtSignal(int)
+    # Fired (via a queued connection) when the zero-latency engine finishes
+    # playing the headset output, so the "Stop" state on the cards is released.
+    _fast_audio_finished = pyqtSignal()
 
     _VOICE_TEST_SENTENCE = "Bonjour, ceci est un test de ma voix clonée avec SoundMaster."
     _MIC_BUTTON_LABEL = "● Enregistrer au micro"
@@ -581,6 +600,11 @@ class MainWindow(QMainWindow):
         self._hotkey_players: dict[int, tuple[object, object]] = {}
         self._favorite_players: dict[str, tuple[object, object]] = {}
         self._fast_audio = FastAudioEngine()
+        # The engine callback runs on the audio thread; the signal marshals it
+        # back to the UI thread so the "Stop" state on cards is released when
+        # the last queued buffer finishes playing.
+        self._fast_audio.set_completion_callback(self._fast_audio_finished.emit)
+        self._fast_audio_finished.connect(self._on_fast_audio_finished)
         self._audio_outputs: dict[bool, object] = {}
         self._network_thread: QThread | None = None
         self._network_worker: QObject | None = None
@@ -892,7 +916,7 @@ class MainWindow(QMainWindow):
         setup_row.setHorizontalSpacing(8)
         setup_row.setVerticalSpacing(6)
         self._voice_setup_layout = setup_row
-        self.voice_profile_combo = QComboBox()
+        self.voice_profile_combo = WheelScrollComboBox()
         self.voice_profile_combo.setPlaceholderText("Mes voix sauvegardées…")
         self.voice_profile_combo.currentIndexChanged.connect(self._voice_profile_changed)
         setup_row.addWidget(self.voice_profile_combo, 0, 0)
@@ -1148,7 +1172,7 @@ class MainWindow(QMainWindow):
         advanced_form.setContentsMargins(14, 10, 14, 12)
         advanced_form.setHorizontalSpacing(12)
         advanced_form.setVerticalSpacing(8)
-        self.voice_engine = QComboBox()
+        self.voice_engine = WheelScrollComboBox()
         self.voice_engine.addItem("Qwen3-TTS 1.7B — qualité maximale (recommandé)", "qwen3-tts")
         self.voice_engine.addItem("Qwen3-TTS 0.6B — léger et rapide (~1.2 Go)", "qwen3-tts-0.6b")
         self.voice_engine.addItem("Pocket TTS — rapide, sans GPU", "pocket-tts")
@@ -1177,7 +1201,7 @@ class MainWindow(QMainWindow):
         self.voice_model.setReadOnly(True)
         advanced_form.addWidget(QLabel("Modèle local"), 3, 0)
         advanced_form.addWidget(self.voice_model, 3, 1)
-        self.voice_language = QComboBox()
+        self.voice_language = WheelScrollComboBox()
         # The visible label is French; the data stays the canonical engine token
         # so saved voices and the other engines keep working unchanged.
         for label, token in VOICE_LANGUAGES:
@@ -1238,7 +1262,7 @@ class MainWindow(QMainWindow):
         self.voice_repetition_penalty.setValue(1.05)
         advanced_form.addWidget(QLabel("Anti-répétition"), 9, 0)
         advanced_form.addWidget(self.voice_repetition_penalty, 9, 1)
-        self.voice_capture_output = QComboBox()
+        self.voice_capture_output = WheelScrollComboBox()
         self._populate_voice_capture_outputs()
         advanced_form.addWidget(QLabel("Sortie à capturer"), 10, 0)
         advanced_form.addWidget(self.voice_capture_output, 10, 1)
@@ -1470,7 +1494,7 @@ class MainWindow(QMainWindow):
         intro.setObjectName("muted")
         intro.setWordWrap(True)
         layout.addWidget(intro)
-        self.default_language = QComboBox()
+        self.default_language = WheelScrollComboBox()
         for label, token in VOICE_LANGUAGES:
             self.default_language.addItem(label, token)
         saved = self.library.preference(DEFAULT_LANGUAGE_PREFERENCE, "French")
@@ -1658,9 +1682,9 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(4, 8, 4, 4)
         audio_group = QGroupBox("Audio et sorties")
         audio_form = QFormLayout(audio_group)
-        self.microphone_input = QComboBox()
-        self.headset_output = QComboBox()
-        self.virtual_output = QComboBox()
+        self.microphone_input = WheelScrollComboBox()
+        self.headset_output = WheelScrollComboBox()
+        self.virtual_output = WheelScrollComboBox()
         self._populate_audio_devices()
         audio_form.addRow("Microphone / entrée", self.microphone_input)
         audio_form.addRow("Sortie 1 — casque", self.headset_output)
@@ -2223,9 +2247,21 @@ class MainWindow(QMainWindow):
         for card in getattr(self, "_dashboard_cards", []):
             card.set_preview_playing(card.item.id == sound_id)
 
+    def _on_fast_audio_finished(self) -> None:
+        """Release the preview state when the zero-latency engine drains.
+
+        The FastAudioEngine plays through a persistent background stream that
+        has no QMediaPlayer state to report: without this, the "Stop" button
+        stayed active forever after a sound ended.
+        """
+
+        if self._active_preview_sound_id is not None:
+            self._set_active_preview(None)
+
     def _stop_sound(self, sound_id: int) -> None:
         if self._active_preview_sound_id != sound_id:
             return
+        self._fast_audio.stop(False)
         player = self._players.get(False)
         if player is not None:
             player.stop()
@@ -3098,26 +3134,46 @@ class MainWindow(QMainWindow):
             else self.paths.audio_cache / "generated-voices" / f"voice-{stamp}.wav"
         )
         self._voice_test_mode = test_mode
-        self._voice_thread = QThread(self)
         requested_engine = str(self.voice_engine.currentData() or "pocket-tts")
         if not is_engine_runtime_installed(requested_engine):
-            fallback_engine = (
-                "pocket-tts"
-                if is_engine_runtime_installed("pocket-tts")
-                else "qwen3-tts"
-                if is_engine_runtime_installed("qwen3-tts")
-                else "omnivoice"
+            # Never fall back to an engine whose runtime is missing too: that is
+            # how the packaged app ended up asking for the OmniVoice model while
+            # the user had Pocket TTS selected. Only switch to an engine that can
+            # actually run, in the same priority order as the combo box.
+            fallback_engine = next(
+                (
+                    candidate
+                    for candidate in (
+                        "pocket-tts",
+                        "qwen3-tts",
+                        "qwen3-tts-0.6b",
+                        "omnivoice",
+                        "f5-tts",
+                    )
+                    if candidate != requested_engine
+                    and is_engine_runtime_installed(candidate)
+                ),
+                "",
             )
-            if requested_engine != fallback_engine:
-                self.statusBar().showMessage(
-                    f"Runtime {requested_engine} indisponible — bascule automatique sur {fallback_engine}.",
-                    7000,
+            if not fallback_engine:
+                QMessageBox.warning(
+                    self,
+                    "Moteur vocal indisponible",
+                    f"Le moteur « {requested_engine} » n’est pas installé dans cette "
+                    "application. Réinstallez-la avec l’extra correspondant "
+                    "(Pocket TTS, Qwen3-TTS, OmniVoice ou F5-TTS) puis réessayez.",
                 )
-                idx = self.voice_engine.findData(fallback_engine)
-                if idx >= 0:
-                    self.voice_engine.setCurrentIndex(idx)
-                requested_engine = fallback_engine
+                return
+            self.statusBar().showMessage(
+                f"Runtime {requested_engine} indisponible — bascule automatique sur {fallback_engine}.",
+                7000,
+            )
+            idx = self.voice_engine.findData(fallback_engine)
+            if idx >= 0:
+                self.voice_engine.setCurrentIndex(idx)
+            requested_engine = fallback_engine
 
+        self._voice_thread = QThread(self)
         if requested_engine == "f5-tts":
             text = self._f5_generation_text(test_mode)
         self._active_voice_engine = requested_engine

@@ -14,11 +14,26 @@ sounddevice_datas, sounddevice_binaries, sounddevice_hiddenimports = collect_all
 # collected explicitly (not just via PyInstaller's hook) so the packaged app can
 # never silently lose it and fall back to the slow QMediaPlayer path.
 soundfile_datas, soundfile_binaries, soundfile_hiddenimports = collect_all("soundfile")
+# pocket_tts is the default voice engine: without it, is_engine_runtime_installed()
+# returns False in the packaged app, the generation fallback switches to another
+# engine and the user is asked to download a model they never chose. Collect it
+# explicitly (package data like the language configs included) exactly like
+# soundfile so a future build can never silently drop the default engine. A
+# build environment without the `pocket` extra must fail here with a clear
+# message rather than ship an app whose default engine is missing (the v0.8.7 bug).
+try:
+    pocket_datas, pocket_binaries, pocket_hiddenimports = collect_all("pocket_tts")
+except Exception as error:  # noqa: BLE001 - fail loudly with actionable text
+    raise SystemExit(
+        "Cannot build the release: pocket_tts is not installed in this environment. "
+        "Install it with `python -m pip install -e \".[pocket]\"` before running the build."
+    ) from error
 
 datas = [
     (str(SRC / "soundmaster" / "resources"), "soundmaster/resources"),
     *sounddevice_datas,
     *soundfile_datas,
+    *pocket_datas,
 ]
 
 hiddenimports = [
@@ -28,6 +43,7 @@ hiddenimports = [
     "soundmaster.resources",
     *sounddevice_hiddenimports,
     *soundfile_hiddenimports,
+    *pocket_hiddenimports,
     *collect_submodules("soundmaster.core"),
     *collect_submodules("soundmaster.ui"),
 ]
@@ -35,7 +51,7 @@ hiddenimports = [
 analysis = Analysis(
     [str(SRC / "soundmaster" / "main.py")],
     pathex=[str(SRC)],
-    binaries=[*sounddevice_binaries, *soundfile_binaries],
+    binaries=[*sounddevice_binaries, *soundfile_binaries, *pocket_binaries],
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

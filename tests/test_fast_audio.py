@@ -124,6 +124,53 @@ def test_stream_self_heals_in_background(fake_sounddevice, monkeypatch) -> None:
     output.close()
 
 
+def test_completion_callback_fires_when_buffers_drain(fake_sounddevice) -> None:
+    """The zero-latency engine must notify the UI when playback ends.
+
+    Regression: dashboard/favorites play through FastAudioEngine, whose
+    persistent background stream has no QMediaPlayer state to report. Without
+    a completion notification the card kept showing "■ Stop" forever after the
+    sound ended.
+    """
+
+    from soundmaster.core.fast_audio import ContinuousAudioOutput
+
+    completed: list[bool] = []
+    output = ContinuousAudioOutput()
+    output.set_completion_callback(lambda: completed.append(True))
+
+    # Queue a short buffer (half a 512-sample callback block): it is fully
+    # consumed and drained by the first callback, which must fire the
+    # completion notification.
+    pcm = np.zeros((256, 2), dtype=np.float32)
+    assert output.play(pcm) is True
+    assert completed == []
+
+    out = np.zeros((512, 2), dtype=np.float32)
+    output._audio_callback(out, 512, None, None)
+    assert output.is_playing() is False
+    assert completed == [True]
+    output.close()
+
+
+def test_completion_callback_does_not_fire_on_manual_stop(fake_sounddevice) -> None:
+    """stop_all() is a user-initiated stop: it must not release the UI state
+    through the completion path (the caller already resets the buttons)."""
+
+    from soundmaster.core.fast_audio import ContinuousAudioOutput
+
+    completed: list[bool] = []
+    output = ContinuousAudioOutput()
+    output.set_completion_callback(lambda: completed.append(True))
+    assert output.play(np.zeros((512, 2), dtype=np.float32)) is True
+
+    output.stop_all()
+    out = np.zeros((512, 2), dtype=np.float32)
+    output._audio_callback(out, 512, None, None)
+    assert completed == []
+    output.close()
+
+
 def test_fast_audio_engine_play_falls_back_when_stream_is_dead(fake_sounddevice, tmp_path: Path) -> None:
     from soundmaster.core.fast_audio import FastAudioEngine
 

@@ -59,7 +59,11 @@ jobs:
           python -m pip install --upgrade pip
           # v0.8.2-v0.8.5 introduced the audio engine before declaring numpy
           # in pyproject.toml; keep manual publication of those tags recoverable.
-          python -m pip install ".[dev,build]" "numpy>=1.26,<3"
+          # The `pocket` extra is REQUIRED: pocket_tts is the default engine and
+          # PyInstaller can only bundle it when it is installed at build time.
+          # v0.8.7 shipped without it, which made the packaged app fall back to
+          # OmniVoice and demand a model the user never chose.
+          python -m pip install ".[dev,build,pocket]" "numpy>=1.26,<3"
 
       - name: Run tests before packaging
         shell: pwsh

@@ -21,6 +21,22 @@ def test_spec_bundles_the_zero_latency_audio_libraries() -> None:
     assert "*soundfile_hiddenimports" in spec
 
 
+def test_spec_bundles_the_default_voice_engine() -> None:
+    """The packaged app must embed pocket_tts, the default voice engine.
+
+    Regression: v0.8.7 shipped without it. is_engine_runtime_installed() then
+    returned False for the user's default, the generation fallback switched to
+    omnivoice (its unconditional last resort) and the user was asked to install
+    the OmniVoice model although they had Pocket TTS selected.
+    """
+
+    spec = Path("packaging/SoundMaster.spec").read_text(encoding="utf-8")
+    assert 'collect_all("pocket_tts")' in spec
+    assert "*pocket_datas" in spec
+    assert "*pocket_binaries" in spec
+    assert "*pocket_hiddenimports" in spec
+
+
 def test_portable_mode_uses_executable_directory(monkeypatch, tmp_path: Path) -> None:
     executable_dir = tmp_path / "SoundMaster"
     executable_dir.mkdir()

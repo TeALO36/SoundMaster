@@ -64,6 +64,9 @@ class ContinuousAudioOutput:
         self._stream: Any = None
         self._retry_pending = False
         self._retry_thread: Thread | None = None
+        # Called (from the audio thread) when the last queued buffer finishes
+        # playing. The UI uses this to release the "Stop" button state.
+        self._completion_callback: Any = None
         self._start_stream()
 
     def _audio_callback(
@@ -81,6 +84,7 @@ class ContinuousAudioOutput:
             if not self._playing_buffers:
                 return
 
+            was_playing = bool(self._playing_buffers)
             active: list[dict[str, Any]] = []
             mix_buffer = np.zeros_like(outdata)
 
@@ -100,8 +104,14 @@ class ContinuousAudioOutput:
 
             np.clip(mix_buffer, -1.0, 1.0, out=outdata)
             self._playing_buffers = active
+            finished = was_playing and not active
         finally:
             self._lock.release()
+
+        if finished:
+            callback = self._completion_callback
+            if callback is not None:
+                callback()
 
     def _start_stream(self) -> None:
         if not SOUNDDEVICE_AVAILABLE or sd is None or self._closed:
@@ -216,6 +226,11 @@ class ContinuousAudioOutput:
             self._playing_buffers.append({"pcm": pcm, "idx": 0})
             return True
 
+    def set_completion_callback(self, callback: Any) -> None:
+        """Register a callable invoked (audio thread) when playback drains."""
+
+        self._completion_callback = callback
+
     def stop_all(self) -> None:
         with self._lock:
             self._playing_buffers.clear()
@@ -273,6 +288,16 @@ class FastAudioEngine:
 
         self.headset_output.set_device(headset_device)
         self.virtual_output.set_device(virtual_device)
+
+    def set_completion_callback(self, callback: Any) -> None:
+        """Register a callable fired (audio thread) when headset playback ends.
+
+        The virtual output intentionally shares the same callback: the UI only
+        tracks one active preview at a time, and the headset stream is the one
+        whose "Stop" button state must be released when the sound ends.
+        """
+
+        self.headset_output.set_completion_callback(callback)
 
     def play(self, path: Path | str, virtual: bool = False) -> bool:
         key = str(Path(path).resolve())

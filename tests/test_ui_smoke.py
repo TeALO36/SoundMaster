@@ -1107,4 +1107,195 @@ def test_pocket_only_controls_hide_for_the_other_engines(
     assert window.voice_reference_text.isEnabled() is True
 
     window._allow_close = True
+
+
+def test_engine_fallback_never_switches_to_an_engine_without_its_runtime(
+    qapp: QApplication, tmp_path: Path, monkeypatch
+) -> None:
+    """The generation fallback must never pick an engine whose runtime is missing.
+
+    Regression: the packaged v0.8.7 app did not bundle pocket_tts, so the
+    default engine looked "missing", the old unconditional last resort switched
+    to omnivoice, and the user was asked to install the OmniVoice model even
+    though they had Pocket TTS selected.
+    """
+
+    from PyQt6.QtWidgets import QMessageBox
+
+    window = _unlocked_window(tmp_path)
+    window.show()
+    window._select_page(1)
+
+    # Simulate a packaged install where NO engine runtime is available.
+    monkeypatch.setattr(
+        "soundmaster.ui.main_window.is_engine_runtime_installed", lambda _key: False
+    )
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "soundmaster.ui.main_window.QMessageBox.warning",
+        lambda *args: warnings.append((args[1], args[2])) or QMessageBox.StandardButton.Ok,
+    )
+
+    # Pocket TTS is the default; without any runtime the app must refuse
+    # instead of switching to OmniVoice and demanding its model.
+    assert window.voice_engine.currentData() == "pocket-tts"
+    sample = tmp_path / "sample.wav"
+    sample.write_bytes(b"RIFF")
+    window._set_voice_sample(sample)
+    window.voice_text.setPlainText("Bonjour")
+    window._start_voice_generation(False)
+
+    assert window.voice_engine.currentData() == "pocket-tts"  # no silent switch
+    assert window._voice_thread is None  # nothing was started
+    assert warnings, "a clear error must explain the missing engine"
+    assert "pocket-tts" in warnings[0][1] and "n’est pas installé" in warnings[0][1]
+
+    window._allow_close = True
+    window.close()
+
+
+def test_engine_fallback_uses_the_first_installed_alternative(
+    qapp: QApplication, tmp_path: Path, monkeypatch
+) -> None:
+    """When the selected engine is missing but another is installed, the
+    fallback must switch to an actually usable engine — in combo order.
+    """
+
+    window = _unlocked_window(tmp_path)
+    window.show()
+    window._select_page(1)
+
+    from PyQt6.QtWidgets import QMessageBox
+
+    installed = {"qwen3-tts", "pocket-tts"}
+    monkeypatch.setattr(
+        "soundmaster.ui.main_window.is_engine_runtime_installed",
+        lambda key: key in installed,
+    )
+    # The started worker fails on the fake sample and would pop a modal dialog.
+    monkeypatch.setattr(
+        "soundmaster.ui.main_window.QMessageBox.warning",
+        lambda *args: QMessageBox.StandardButton.Ok,
+    )
+
+    # Force the combo onto qwen3-tts (a runtime that exists in this scenario),
+    # then remove it from the installed set: only pocket-tts remains usable.
+    window.voice_engine.setCurrentIndex(window.voice_engine.findData("qwen3-tts"))
+    installed.remove("qwen3-tts")
+
+    sample = tmp_path / "sample.wav"
+    sample.write_bytes(b"RIFF")
+    window._set_voice_sample(sample)
+    window.voice_text.setPlainText("Bonjour")
+    window._start_voice_generation(False)
+
+    assert window.voice_engine.currentData() == "pocket-tts"
+    assert "bascule automatique" in window.statusBar().currentMessage()
+
+    # Clean up the worker thread that was started.
+    if window._voice_thread is not None:
+        window._voice_thread.quit()
+        window._voice_thread.wait(2000)
+    window._allow_close = True
+    window.close()
+
+
+def test_combo_boxes_ignore_the_scroll_wheel_over_the_page(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """Hovering a combo (model list, language) while scrolling the page must
+    scroll the page, not change the selected item."""
+
+    from PyQt6.QtCore import QPoint, QPointF, Qt
+    from PyQt6.QtGui import QWheelEvent
+
+    window = _unlocked_window(tmp_path)
+    window.show()
+    window._select_page(1)
+
+    combo = window.voice_language
+    before = combo.currentIndex()
+    wheel = QWheelEvent(
+        QPointF(10, 10),
+        QPointF(10, 10),
+        QPoint(0, 0),
+        QPoint(0, -120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+    qapp.sendEvent(combo, wheel)
+    qapp.processEvents()
+    assert combo.currentIndex() == before
+
+    # Same guard on the default-language selector in Settings and the model list.
+    assert isinstance(window.default_language, window.__class__.mro()[0]) or True
+    from soundmaster.ui.main_window import WheelScrollComboBox
+
+    assert isinstance(window.default_language, WheelScrollComboBox)
+    assert isinstance(window.voice_language, WheelScrollComboBox)
+    assert isinstance(window.voice_engine, WheelScrollComboBox)
+    assert isinstance(window.microphone_input, WheelScrollComboBox)
+
+    window._allow_close = True
+    window.close()
+
+
+def test_stop_button_releases_when_the_fast_engine_finishes(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """The "■ Stop" state must be released when playback ends.
+
+    Regression: dashboard/favorites play through FastAudioEngine, whose
+    persistent stream has no QMediaPlayer state to report, so the card stayed
+    on "■ Stop" forever after the sound finished.
+    """
+
+    window = _unlocked_window(tmp_path)
+    window.show()
+    window._select_page(0)
+    audio = tmp_path / "preview.wav"
+    audio.write_bytes(b"RIFF")
+    sound = window.library.add_sound("Preview", audio)
+    window._refresh_dashboard()
+    card = next(card for card in window._dashboard_cards if card.item.id == sound.id)
+
+    # Simulate a click that marks the card as actively previewing.
+    window._set_active_preview(sound.id)
+    assert card.preview_button.text() == "■ Stop"
+
+    # The engine completion (audio thread) is marshalled through the Qt signal.
+    window._fast_audio_finished.emit()
+    qapp.processEvents()
+    assert card.preview_button.text() == "▶ Tester"
+    assert window._active_preview_sound_id is None
+
+    window._allow_close = True
+    window.close()
+
+
+def test_stop_sound_stops_the_fast_engine_too(qapp: QApplication, tmp_path: Path) -> None:
+    """Clicking "■ Stop" must actually silence the zero-latency engine, not
+    just the QMediaPlayer fallback."""
+
+    window = _unlocked_window(tmp_path)
+    window.show()
+    window._select_page(0)
+    audio = tmp_path / "stop.wav"
+    audio.write_bytes(b"RIFF")
+    sound = window.library.add_sound("StopMe", audio)
+    stopped: list[bool] = []
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        window._fast_audio, "stop", lambda virtual=False: stopped.append(virtual)
+    )
+
+    window._set_active_preview(sound.id)
+    window._stop_sound(sound.id)
+    assert stopped == [False]
+    assert window._active_preview_sound_id is None
+
+    monkeypatch.undo()
+    window._allow_close = True
     window.close()
