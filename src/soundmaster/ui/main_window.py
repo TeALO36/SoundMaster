@@ -3306,7 +3306,8 @@ class MainWindow(QMainWindow):
             self._keybind_capture_buttons[sound.id] = capture
             self.keybind_table.setCellWidget(row, 2, capture)
             clear = QPushButton("Effacer")
-            clear.setObjectName("ghostButton")
+            clear.setObjectName("tableGhostButton")
+            clear.setToolTip("Effacer le raccourci clavier assigné à ce favori")
             clear.clicked.connect(
                 lambda _checked=False, sound_id=sound.id: self._clear_keybind(sound_id)
             )

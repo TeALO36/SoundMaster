@@ -57,6 +57,7 @@ class ContinuousAudioOutput:
     def __init__(self, device_name_or_index: Any = None, samplerate: int = 44100) -> None:
         self.samplerate = samplerate
         self.device = device_name_or_index
+        self._closed = False
         self._lock = RLock()
         self._playing_buffers: list[dict[str, Any]] = []
         self._stream: Any = None
@@ -66,7 +67,14 @@ class ContinuousAudioOutput:
         self, outdata: np.ndarray, frames: int, time_info: Any, status: Any
     ) -> None:
         outdata.fill(0)
-        with self._lock:
+        if getattr(self, "_closed", False):
+            return
+
+        acquired = self._lock.acquire(blocking=False)
+        if not acquired:
+            return
+
+        try:
             if not self._playing_buffers:
                 return
 
@@ -89,9 +97,11 @@ class ContinuousAudioOutput:
 
             np.clip(mix_buffer, -1.0, 1.0, out=outdata)
             self._playing_buffers = active
+        finally:
+            self._lock.release()
 
     def _start_stream(self) -> None:
-        if not SOUNDDEVICE_AVAILABLE or sd is None:
+        if not SOUNDDEVICE_AVAILABLE or sd is None or self._closed:
             return
         try:
             device_idx = self._resolve_device_index(self.device)
@@ -122,23 +132,30 @@ class ContinuousAudioOutput:
         return None
 
     def set_device(self, device_name_or_index: Any) -> None:
+        stream_to_close = None
         with self._lock:
             self.stop_all()
-            if self._stream is not None:
-                try:
-                    self._stream.stop()
-                    self._stream.close()
-                except Exception:
-                    pass
-                self._stream = None
+            stream_to_close = self._stream
+            self._stream = None
             self.device = device_name_or_index
-            self._start_stream()
+
+        if stream_to_close is not None:
+            try:
+                stream_to_close.stop()
+                stream_to_close.close()
+            except Exception:
+                pass
+
+        with self._lock:
+            if not self._closed:
+                self._start_stream()
 
     def play(self, pcm: np.ndarray) -> None:
         with self._lock:
-            if self._stream is None or not getattr(self._stream, "active", False):
-                self._start_stream()
-            self._playing_buffers.append({"pcm": pcm, "idx": 0})
+            if not self._closed:
+                if self._stream is None or not getattr(self._stream, "active", False):
+                    self._start_stream()
+                self._playing_buffers.append({"pcm": pcm, "idx": 0})
 
     def stop_all(self) -> None:
         with self._lock:
@@ -149,15 +166,19 @@ class ContinuousAudioOutput:
             return len(self._playing_buffers) > 0
 
     def close(self) -> None:
+        stream_to_close = None
         with self._lock:
+            self._closed = True
             self.stop_all()
-            if self._stream is not None:
-                try:
-                    self._stream.stop()
-                    self._stream.close()
-                except Exception:
-                    pass
-                self._stream = None
+            stream_to_close = self._stream
+            self._stream = None
+
+        if stream_to_close is not None:
+            try:
+                stream_to_close.stop()
+                stream_to_close.close()
+            except Exception:
+                pass
 
 
 class FastAudioEngine:

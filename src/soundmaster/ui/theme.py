@@ -366,7 +366,7 @@ QHeaderView::section {
 QTableWidget {
     gridline-color: #1c2920;
 }
-QTableWidget QPushButton, QPushButton#shortcutCaptureButton {
+QTableWidget QPushButton, QPushButton#tableGhostButton, QPushButton#shortcutCaptureButton {
     min-height: 24px;
     max-height: 28px;
     padding: 2px 10px;
@@ -377,6 +377,16 @@ QTableWidget QPushButton, QPushButton#shortcutCaptureButton {
 QPushButton#shortcutCaptureButton:hover {
     border-color: #6ed18a;
     color: #baf4c7;
+}
+QPushButton#tableGhostButton {
+    color: #d1dfd4;
+    background: #111713;
+    border: 1px solid #263a2b;
+}
+QPushButton#tableGhostButton:hover {
+    color: #f87171;
+    background: #1c0a0a;
+    border-color: #f87171;
 }
 QToolTip {
     color: #eff8f0;
