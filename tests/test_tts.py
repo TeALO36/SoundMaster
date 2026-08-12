@@ -21,6 +21,37 @@ def _paths(tmp_path: Path) -> AppPaths:
     )
 
 
+def test_f5_generation_preserves_emotion_markers() -> None:
+    captured: dict[str, object] = {}
+
+    class FakeF5:
+        def infer(self, ref_file: str, ref_text: str, gen_text: str, speed: float = 1.0):
+            captured.update(
+                ref_file=ref_file,
+                ref_text=ref_text,
+                gen_text=gen_text,
+                speed=speed,
+            )
+            return [0.0, 0.2], 24_000, object()
+
+    audio, sample_rate = QwenVoiceService._generate_f5tts(
+        FakeF5(),
+        "[happy]Bonjour [sad]au revoir",
+        Path("sample.wav"),
+        "",
+        {"speed": 1.1, "emotion_prompt": ""},
+    )
+
+    assert audio == [0.0, 0.2]
+    assert sample_rate == 24_000
+    assert captured == {
+        "ref_file": "sample.wav",
+        "ref_text": "",
+        "gen_text": "[happy]Bonjour [sad]au revoir",
+        "speed": 1.1,
+    }
+
+
 def test_qwen_empty_reference_text_uses_local_transcription(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

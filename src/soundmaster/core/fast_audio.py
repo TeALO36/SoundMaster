@@ -8,8 +8,9 @@ latency (sub-millisecond trigger time on click).
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
-from threading import RLock
+from threading import RLock, Thread
 from typing import Any
 
 import numpy as np
@@ -61,6 +62,8 @@ class ContinuousAudioOutput:
         self._lock = RLock()
         self._playing_buffers: list[dict[str, Any]] = []
         self._stream: Any = None
+        self._retry_pending = False
+        self._retry_thread: Thread | None = None
         self._start_stream()
 
     def _audio_callback(
@@ -105,17 +108,57 @@ class ContinuousAudioOutput:
             return
         try:
             device_idx = self._resolve_device_index(self.device)
+            # latency="low" halves the WASAPI shared-mode buffer (~180 ms down
+            # to ~90 ms on a typical device), which is the dominant audible
+            # delay between the click and the sound leaving the speakers. The
+            # 512-sample callback is unaffected and keeps CPU usage low.
             self._stream = sd.OutputStream(
                 device=device_idx,
                 channels=2,
                 samplerate=self.samplerate,
                 blocksize=512,
+                latency="low",
                 callback=self._audio_callback,
             )
             self._stream.start()
+            self._retry_pending = False
         except Exception as err:
             logger.warning(f"ContinuousAudioOutput stream start error: {err}")
             self._stream = None
+            self._start_retry_loop()
+
+    def _start_retry_loop(self) -> None:
+        """Re-open the stream in the background after a failure.
+
+        A WASAPI open takes ~0.5-1 s. Repeating it synchronously on every click
+        would freeze the UI; instead the failed open is retried off-thread so
+        the stream self-heals (device re-plugged, driver busy, etc.) and the
+        next click finds it warm.
+        """
+
+        if self._closed or self._retry_pending or not SOUNDDEVICE_AVAILABLE or sd is None:
+            return
+        self._retry_pending = True
+
+        def _retry() -> None:
+            try:
+                while not self._closed:
+                    time.sleep(1.0)
+                    with self._lock:
+                        if self._closed:
+                            return
+                        if self._stream is not None and getattr(self._stream, "active", False):
+                            self._retry_pending = False
+                            return
+                        self._start_stream()
+                        if self._stream is not None and getattr(self._stream, "active", False):
+                            self._retry_pending = False
+                            return
+            finally:
+                self._retry_pending = False
+
+        self._retry_thread = Thread(target=_retry, daemon=True, name="soundmaster-audio-retry")
+        self._retry_thread.start()
 
     def _resolve_device_index(self, name_or_idx: Any) -> Any:
         if name_or_idx is None or isinstance(name_or_idx, int):
@@ -150,12 +193,28 @@ class ContinuousAudioOutput:
             if not self._closed:
                 self._start_stream()
 
-    def play(self, pcm: np.ndarray) -> None:
+    def play(self, pcm: np.ndarray) -> bool:
         with self._lock:
-            if not self._closed:
-                if self._stream is None or not getattr(self._stream, "active", False):
+            if self._closed:
+                return False
+            if self._stream is None or not getattr(self._stream, "active", False):
+                if self._retry_pending:
+                    # A background open is already in flight: give it a short
+                    # window instead of blocking the UI for a full WASAPI open.
+                    deadline = time.monotonic() + 0.15
+                    while self._retry_pending and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                else:
+                    # First failure after a healthy stream: one synchronous
+                    # attempt (handed over to the retry loop if it fails).
                     self._start_stream()
-                self._playing_buffers.append({"pcm": pcm, "idx": 0})
+            if self._stream is None or not getattr(self._stream, "active", False):
+                # No live stream means the audio would silently never be heard;
+                # report failure so the caller can fall back to QMediaPlayer
+                # instead of freezing the UI.
+                return False
+            self._playing_buffers.append({"pcm": pcm, "idx": 0})
+            return True
 
     def stop_all(self) -> None:
         with self._lock:
@@ -165,10 +224,15 @@ class ContinuousAudioOutput:
         with self._lock:
             return len(self._playing_buffers) > 0
 
+    def is_active(self) -> bool:
+        with self._lock:
+            return self._stream is not None and getattr(self._stream, "active", False)
+
     def close(self) -> None:
         stream_to_close = None
         with self._lock:
             self._closed = True
+            self._retry_pending = False
             self.stop_all()
             stream_to_close = self._stream
             self._stream = None
@@ -179,6 +243,9 @@ class ContinuousAudioOutput:
                 stream_to_close.close()
             except Exception:
                 pass
+        if self._retry_thread is not None:
+            self._retry_thread.join(timeout=2.0)
+            self._retry_thread = None
 
 
 class FastAudioEngine:
@@ -201,6 +268,12 @@ class FastAudioEngine:
             logger.warning(f"Preload audio failed for {path}: {err}")
             return False
 
+    def set_devices(self, headset_device: Any = None, virtual_device: Any = None) -> None:
+        """Re-point both output streams after the user changes the audio settings."""
+
+        self.headset_output.set_device(headset_device)
+        self.virtual_output.set_device(virtual_device)
+
     def play(self, path: Path | str, virtual: bool = False) -> bool:
         key = str(Path(path).resolve())
         pcm = self._pcm_cache.get(key)
@@ -213,8 +286,7 @@ class FastAudioEngine:
                 return False
 
         output = self.virtual_output if virtual else self.headset_output
-        output.play(pcm)
-        return True
+        return output.play(pcm)
 
     def stop(self, virtual: bool = False) -> None:
         output = self.virtual_output if virtual else self.headset_output
@@ -223,6 +295,10 @@ class FastAudioEngine:
     def is_playing(self, virtual: bool = False) -> bool:
         output = self.virtual_output if virtual else self.headset_output
         return output.is_playing()
+
+    def is_active(self, virtual: bool = False) -> bool:
+        output = self.virtual_output if virtual else self.headset_output
+        return output.is_active()
 
     def close(self) -> None:
         self.headset_output.close()

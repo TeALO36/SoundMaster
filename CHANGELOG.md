@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.8.7 — 2026-08-12
+
+### Fixed
+
+- **« Appliquer et enregistrer » (Audio et système) plantait à chaque clic** : le code appelait `FastAudioEngine.set_devices()` qui n’existait pas. La sortie 2 est désormais optionnelle — plus aucune erreur « Sélectionnez deux périphériques distincts », et « Aucun (désactivé) » est le choix par défaut, donc un utilisateur sans câble virtuel n’est plus bloqué ni forcé d’en installer un.
+- **Latence de lecture des soundboards (~2 s)** : `soundfile` (décodage WAV/MP3/OGG/FLAC) n’était pas une dépendance de base, donc le moteur zéro-latence échouait silencieusement et tout retombait sur QMediaPlayer, lent à démarrer. `soundfile` est désormais dans les dépendances de base, le cache PCM est préchargé dès le survol **et pour les sons récents**, et `play()` signale un échec (au lieu d’un silence) quand le flux audio est mort, pour basculer proprement sur QMediaPlayer.
+- **Latence audible encore réduite** : mesurée à ~100 ms (5–11 ms de callback + ~90 ms de tampon WASAPI). Le flux utilise désormais `latency="low"` (tampon matériel divisé par deux, ~180 → ~90 ms) et un flux de sortie mort est **rouvert automatiquement en arrière-plan** (au lieu de bloquer l’interface ~0,5–1 s à chaque clic puis de retomber sur QMediaPlayer). Un script `scripts/mesurer_latence_lecture.py` décompose et mesure ces délais.
+- **Diagnostic GPU/clonage alarmiste sur une installation saine** : il ne vérifiait que le runtime Qwen3-TTS et affichait « runtime incomplet », « modèle absent », « PyTorch absent ». Il rend désormais compte du moteur par défaut (Pocket TTS, CPU sans PyTorch), détecte **AMD/ROCm** en plus de NVIDIA/CUDA, et n’indique les actions que lorsqu’elles sont réellement nécessaires.
+- Le bouton des raccourcis s’appelle maintenant **« Activer les raccourcis » / « Désactiver les raccourcis »** au lieu de « Activer dans Windows ».
+
+### Added
+
+- **Langue par défaut globale** dans Paramètres → Clonage de voix. Choisie une seule fois, elle s’applique à tous les moteurs : Pocket TTS charge son modèle dédié (français, anglais, etc.), Qwen3-TTS et OmniVoice l’utilisent à la génération, et « Auto » laisse chaque moteur choisir. Les nouvelles voix et la page de clonage démarrent sur cette langue, tout en gardant la possibilité de la surcharger voix par voix.
+
+### Changed
+
+- La page **Conformité éditeur** est pré-remplie avec l’identité du projet open source (nom, dépôt GitHub, références des licences) : l’utilisateur final n’a plus rien à remplir pour utiliser l’application. Un script `setup_amd.bat` installe PyTorch ROCm pour les GPU AMD.
+
+### Validation
+
+- 118 tests automatisés passent (dont de nouveaux tests : moteur audio basse latence, auto-rétablissement du flux, routage des favoris via FastAudioEngine, langue par défaut globale, détection AMD/ROCm, conformité pré-remplie).
+- Test de bout en bout réel : échantillon vocal français généré avec Windows SAPI, cloné avec le vrai moteur Pocket TTS via le service de l’application (sortie WAV valide).
+
 ## 0.8.6 — 2026-08-12
 
 ### Fixed

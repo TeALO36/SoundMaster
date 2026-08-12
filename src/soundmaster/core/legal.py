@@ -20,6 +20,13 @@ from urllib.parse import urlparse
 LEGAL_PROFILE_FILENAME = "legal_profile.json"
 PROFILE_VERSION = 1
 
+# SoundMaster is an open-source project distributed from this repository. The
+# compliance profile is pre-filled with the project's own identity and document
+# references so that end users are never asked to act as the publisher.
+PROJECT_URL = "https://github.com/TeALO36/SoundMaster"
+PROJECT_ISSUES_URL = f"{PROJECT_URL}/issues"
+PROJECT_NOTICES_URL = f"{PROJECT_URL}/blob/main/THIRD_PARTY_NOTICES.md"
+
 
 def _coerce_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, bool):
@@ -51,37 +58,45 @@ def _coerce_text(value: Any, default: str = "") -> str:
 class PublisherDetails:
     """Identity shown in legal notices and support surfaces."""
 
-    legal_name: str = ""
-    legal_form: str = ""
+    # Pre-filled with the open-source project identity: the application is its
+    # own publisher, so a fresh install should not confront the user with an
+    # empty legal form.
+    legal_name: str = "SoundMaster — projet open source"
+    legal_form: str = "Projet open source (licence MIT)"
     address: str = ""
     country: str = "France"
     registration_number: str = ""
     vat_number: str = ""
     contact_email: str = ""
-    support_url: str = ""
-    hosting_provider: str = ""
+    support_url: str = PROJECT_ISSUES_URL
+    hosting_provider: str = "GitHub"
 
 
 @dataclass(slots=True)
 class LegalDocuments:
     """Publisher-controlled URLs or local references to reviewed legal documents."""
 
-    legal_notice_url: str = ""
-    privacy_policy_url: str = ""
-    terms_of_use_url: str = ""
-    terms_of_sale_url: str = ""
-    withdrawal_refund_url: str = ""
-    data_rights_contact_url: str = ""
-    accessibility_statement_url: str = ""
+    # The repository is the single source of truth for this open-source project:
+    # every reference below points at it so a fresh install is complete instead
+    # of presenting the user with an empty form.
+    legal_notice_url: str = PROJECT_URL
+    privacy_policy_url: str = PROJECT_URL
+    terms_of_use_url: str = PROJECT_URL
+    terms_of_sale_url: str = PROJECT_URL
+    withdrawal_refund_url: str = PROJECT_URL
+    data_rights_contact_url: str = PROJECT_ISSUES_URL
+    accessibility_statement_url: str = PROJECT_URL
     # These technical references are safe project defaults; the publisher must
     # replace the revision/checksum with the exact files shipped in a release.
-    qwen_license_reference: str = ""
-    qwen_notice_reference: str = ""
+    qwen_license_reference: str = "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+    # The Qwen3-TTS repositories publish no NOTICE file (Apache-2.0), so the
+    # reference points at the model card which documents the licence.
+    qwen_notice_reference: str = "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     qwen_model_id: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     qwen_model_revision: str = ""
     qwen_model_sha256: str = ""
-    third_party_audio_rights_reference: str = ""
-    myinstants_rights_reference: str = ""
+    third_party_audio_rights_reference: str = PROJECT_NOTICES_URL
+    myinstants_rights_reference: str = PROJECT_URL
 
 
 @dataclass(slots=True)

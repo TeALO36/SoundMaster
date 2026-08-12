@@ -80,3 +80,18 @@ def test_gpu_diagnostics_reports_cpu_fallback(monkeypatch, tmp_path: Path) -> No
     assert "PyTorch : 2.11.0+cpu" in report
     assert "Accélération : CPU" in report
     assert "setup_gpu.bat" in report
+
+
+def test_gpu_diagnostics_detects_amd_rocm(monkeypatch, tmp_path: Path) -> None:
+    fake_torch = SimpleNamespace(
+        __version__="2.9.0+rocm6.4",
+        version=SimpleNamespace(cuda=None, hip="6.4"),
+    )
+    monkeypatch.setitem(__import__("sys").modules, "torch", fake_torch)
+    monkeypatch.setattr("soundmaster.ui.main_window.importlib.util.find_spec", lambda name: object())
+
+    report = collect_gpu_diagnostics(_paths(tmp_path))
+
+    assert "ROCm 6.4" in report
+    assert "accélération AMD détectée" in report
+    assert "GPU AMD : support ROCm actif" in report

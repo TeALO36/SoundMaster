@@ -51,6 +51,13 @@ ouvert dans l’explorateur Windows. Un double-clic sur une ligne de l’histori
 rejoue. Les réglages fins (moteur, langue, température, vitesse, top-p, anti-répétition,
 transcription manuelle, sortie à capturer) restent repliés sous **Réglages avancés**.
 
+Avec **F5-TTS**, la palette colorée **Émotions F5-TTS** apparaît au-dessus de la zone
+de texte. Cliquez sur une émotion puis sélectionnez la portion concernée : la couleur
+est conservée dans l’éditeur et SoundMaster convertit automatiquement ces passages en
+balises `[calm]`, `[happy]`, `[sad]`, `[angry]`, `[disgust]` ou `[fearful]` au moment de
+la génération. Sélectionner à nouveau un passage avec la même émotion retire sa couleur.
+Le texte affiché reste donc lisible et ne contient jamais les balises techniques.
+
 ## Installation Windows
 
 ### Depuis une release

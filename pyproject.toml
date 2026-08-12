@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soundmaster"
-version = "0.8.6"
+version = "0.8.7"
 description = "A local-first Windows soundboard for gamers."
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -16,6 +16,9 @@ dependencies = [
     "keyboard>=0.13,<1",
     "numpy>=1.26,<3",
     "sounddevice>=0.5,<1",
+    # Decoding WAV/MP3/OGG/FLAC into PCM for the zero-latency playback path;
+    # without it every sound falls back to QMediaPlayer and starts ~2 s late.
+    "soundfile>=0.12,<1",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +35,7 @@ audio = [
 tts = [
     "qwen-tts",
     "omnivoice",
+    "f5-tts",
     "soundfile>=0.12,<1",
     "torch>=2.6,<3",
 ]

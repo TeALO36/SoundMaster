@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 PyQt6 = pytest.importorskip("PyQt6")
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtGui import QKeyEvent, QTextCursor
 from PyQt6.QtWidgets import QApplication
 
 from soundmaster.core.config import AppConfig, AppPaths
@@ -62,13 +62,13 @@ def test_main_window_builds_offscreen(qapp: QApplication, tmp_path: Path) -> Non
     assert window.voice_advanced_button.isChecked() is False
     assert window.voice_advanced.isVisible() is False
     assert window.voice_advanced.isHidden()
-    # Qwen3-TTS leads by default as recommended engine.
-    assert window.voice_engine.currentData() == "qwen3-tts"
+    # Pocket TTS is the default engine for a fresh install.
+    assert window.voice_engine.currentData() == "pocket-tts"
     assert window.voice_engine.itemData(1) == "qwen3-tts-0.6b"
     assert window.voice_engine.itemData(2) == "pocket-tts"
     assert window.voice_engine.itemData(3) == "omnivoice"
-    assert window.voice_model.text() == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-    assert window.voice_reference_text.isEnabled()
+    assert window.voice_model.text() == "kyutai/pocket-tts"
+    assert not window.voice_reference_text.isEnabled()
     assert window.voice_progress.isHidden()
     assert window.search_progress.isHidden()
     assert window.download_group.isHidden()
@@ -91,6 +91,42 @@ def test_main_window_builds_offscreen(qapp: QApplication, tmp_path: Path) -> Non
     qapp.processEvents()
     assert window.voice_advanced_button.isChecked() is False
     assert window.voice_advanced.isHidden()
+
+    window._allow_close = True
+    window.close()
+
+
+def test_f5_emotion_palette_applies_and_toggles_text_spans(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    window = _unlocked_window(tmp_path)
+    window.voice_text.setPlainText("Bonjour tout le monde")
+
+    # The intended flow is palette first, then text selection.
+    window._select_f5_emotion("happy")
+    cursor = QTextCursor(window.voice_text.document())
+    cursor.setPosition(0)
+    cursor.setPosition(7, QTextCursor.MoveMode.KeepAnchor)
+    window.voice_text.setTextCursor(cursor)
+    window._apply_active_f5_emotion()
+    assert window._f5_generation_text() == "[happy]Bonjour tout le monde"
+    assert window.voice_emotion_buttons["happy"].isChecked() is True
+
+    # Selecting the same range again with the same emotion toggles it back off.
+    cursor = QTextCursor(window.voice_text.document())
+    cursor.setPosition(0)
+    cursor.setPosition(7, QTextCursor.MoveMode.KeepAnchor)
+    window.voice_text.setTextCursor(cursor)
+    window._apply_active_f5_emotion()
+    assert window._f5_generation_text() == "Bonjour tout le monde"
+
+    # A different colour can be applied to another range.
+    cursor = QTextCursor(window.voice_text.document())
+    cursor.setPosition(8)
+    cursor.setPosition(12, QTextCursor.MoveMode.KeepAnchor)
+    window.voice_text.setTextCursor(cursor)
+    window._select_f5_emotion("sad")
+    assert window._f5_generation_text() == "Bonjour [sad]tout le monde"
 
     window._allow_close = True
     window.close()
@@ -511,6 +547,88 @@ def test_replaying_the_same_sound_skips_the_costly_source_reload(
     window.close()
 
 
+def _tiny_wav(path: Path) -> Path:
+    """Write a small valid 16-bit PCM WAV so soundfile can decode it."""
+
+    import wave
+
+    import numpy as np
+
+    samples = (np.sin(np.linspace(0, 2 * np.pi * 440, 8000)) * 32767).astype("<i2")
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(8000)
+        wav.writeframes(samples.tobytes())
+    return path
+
+
+def test_favorite_playback_uses_the_zero_latency_engine(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path: Path
+) -> None:
+    """Favorites must route through FastAudioEngine, never QMediaPlayer.
+
+    Regression: `soundfile` used to live only in the TTS extras, so the
+    zero-latency engine could never decode audio on a base install and every
+    sound silently fell back to QMediaPlayer (~2 s start delay).
+    """
+
+    # 1) Base-dependency regression: soundfile must be importable on a plain
+    #    install (it is declared in pyproject.toml's main dependencies).
+    import soundfile  # noqa: F401
+
+    from soundmaster.core import fast_audio as fast_audio_module
+
+    assert fast_audio_module.SOUNDDEVICE_AVAILABLE is True
+
+    paths = _paths(tmp_path)
+    window = MainWindow(LegalProfile(), paths.legal_profile, paths, AppConfig())
+    audio = _tiny_wav(tmp_path / "favorite.wav")
+    sound = window.library.add_sound("Favori", audio, favorite=True)
+
+    # 2) Spy on the engine instead of opening a real audio stream: the point is
+    #    routing, not device playback (covered by tests/test_fast_audio.py).
+    played: list[tuple[str, bool]] = []
+
+    def fake_play(path, virtual: bool = False) -> bool:
+        played.append((str(Path(path).resolve()), virtual))
+        return True
+
+    monkeypatch.setattr(window._fast_audio, "play", fake_play)
+
+    # "Tester" on a favorite card → local zero-latency playback.
+    window._play_sound(sound.id, False)
+    assert played == [(str(audio.resolve()), False)]
+    assert window.statusBar().currentMessage() == "Lecture locale"
+
+    # "Envoyer" → the same engine, routed to the second output.
+    window._play_sound(sound.id, True)
+    assert played[-1] == (str(audio.resolve()), True)
+    assert window.statusBar().currentMessage() == "Lecture vers la sortie 2"
+
+    # 3) When the engine reports failure, playback still falls back to the
+    #    QMediaPlayer path instead of going silent — proving the fast path above
+    #    was genuinely taken (the fallback only runs when play() returns False).
+    #    Reset the preview flag first, otherwise _play_sound treats the click
+    #    as a stop toggle for the favorite already marked as playing above.
+    window._active_preview_sound_id = None
+    real_player = window._players[False]
+    media_plays: list[bool] = []
+    monkeypatch.setattr(real_player, "play", lambda: media_plays.append(True))
+
+    def failing_play(path, virtual: bool = False) -> bool:
+        played.append((str(Path(path).resolve()), virtual))
+        return False
+
+    monkeypatch.setattr(window._fast_audio, "play", failing_play)
+    window._play_sound(sound.id, False)
+    assert media_plays == [True]
+    assert len(played) == 3  # the failing call was still attempted on the engine
+
+    window._allow_close = True
+    window.close()
+
+
 def test_hovering_a_card_preloads_it_but_never_interrupts_playback(
     qapp: QApplication, tmp_path: Path
 ) -> None:
@@ -879,7 +997,9 @@ def test_legal_settings_panel_builds_offscreen(qapp: QApplication, tmp_path: Pat
         "À vérifier",
     ]
     assert widget._document_inputs["qwen_model_id"].text() == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-    assert widget._document_inputs["qwen_notice_reference"].text() == ""
+    # The open-source project identity is pre-filled, not left to the user.
+    assert widget._document_inputs["qwen_notice_reference"].text() != ""
+    assert widget._publisher_inputs["legal_name"].text() == "SoundMaster — projet open source"
 
     window.close()
 
@@ -923,6 +1043,43 @@ def test_language_choice_offers_every_pocket_bundle_and_survives_a_save(
     window._voice_profile_changed(window.voice_profile_combo.currentIndex())
     assert window._voice_language() == "French"
     assert window.voice_high_quality.isChecked() is True
+
+    window._allow_close = True
+    window.close()
+
+
+def test_global_default_language_drives_every_engine(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """One default language in the settings seeds new voices and the editors."""
+
+    window = _unlocked_window(tmp_path)
+
+    # The settings panel ships a global language selector, defaulting to French
+    # so a French install never silently clones with the English Pocket bundle.
+    assert window.default_language.currentData() == "French"
+    assert window.library.preference("default_language", "French") == "French"
+
+    # Changing it persists the preference and follows into the voice page.
+    window.default_language.setCurrentIndex(window.default_language.findData("German"))
+    assert window.library.preference("default_language", "French") == "German"
+    assert window._voice_language() == "German"
+
+    # A brand-new voice starts from that global default.
+    window._start_new_voice_profile()
+    assert window._voice_language() == "German"
+    # The engine adapter maps it to the Pocket TTS bundle (load-time) and to the
+    # Qwen generation language (generate-time); both flow from the same token.
+    from soundmaster.core.tts import pocket_language_bundle
+
+    assert pocket_language_bundle("German") == "german"
+
+    # "Auto" stays available and lets each engine pick its own default.
+    window.default_language.setCurrentIndex(window.default_language.findData("Auto"))
+    assert window.library.preference("default_language", "French") == "Auto"
+    window._start_new_voice_profile()
+    assert window._voice_language() == "Auto"
+    assert pocket_language_bundle("Auto") == "english"
 
     window._allow_close = True
     window.close()

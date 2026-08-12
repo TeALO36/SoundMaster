@@ -31,7 +31,14 @@ def is_engine_runtime_installed(engine_key: str) -> bool:
             return True
         except ImportError:
             return False
-    if engine_key in ("qwen3-tts", "qwen3-tts-0.6b", "omnivoice", "f5-tts"):
+    if engine_key == "f5-tts":
+        try:
+            import f5_tts  # noqa: F401
+
+            return True
+        except ImportError:
+            return False
+    if engine_key in ("qwen3-tts", "qwen3-tts-0.6b", "omnivoice"):
         try:
             import torch  # noqa: F401
 
@@ -516,6 +523,12 @@ class QwenVoiceService:
             self._engine_key = engine_key
             self._engine_options = dict(load_options)
             return self._model
+        if engine_key == "f5-tts":
+            self._model = self._load_f5_engine(local_model)
+            self._model_path = local_model
+            self._engine_key = engine_key
+            self._engine_options = dict(load_options)
+            return self._model
         try:
             import torch
         except ImportError as error:
@@ -561,6 +574,58 @@ class QwenVoiceService:
         self._model_path = local_model
         self._engine_key = engine_key
         return self._model
+
+    def _load_f5_engine(self, local_model: Path) -> Any:
+        """Load the official F5-TTS API lazily, using a local checkpoint when present."""
+
+        try:
+            from f5_tts.api import F5TTS
+        except ImportError as error:
+            raise VoiceGenerationError(
+                "Le runtime f5-tts manque. Installez l’extra : "
+                "python -m pip install 'soundmaster[tts]'."
+            ) from error
+
+        checkpoint = next(iter(local_model.rglob("*.safetensors")), None)
+        vocab = next(iter(local_model.rglob("vocab.txt")), None)
+        kwargs: dict[str, object] = {}
+        if checkpoint is not None:
+            kwargs["ckpt_file"] = str(checkpoint)
+        if vocab is not None:
+            kwargs["vocab_file"] = str(vocab)
+        try:
+            return F5TTS(**kwargs)
+        except Exception as error:
+            if _is_out_of_memory(error):
+                raise VoiceGenerationError(OUT_OF_MEMORY_HINT) from error
+            raise VoiceGenerationError(
+                f"Chargement du modèle F5-TTS impossible : {error}"
+            ) from error
+
+    @staticmethod
+    def _generate_f5tts(
+        model: Any,
+        text: str,
+        ref_audio: Path,
+        ref_text: str,
+        settings: dict[str, object] | None = None,
+    ) -> tuple[Any, int]:
+        """Generate F5-TTS speech, preserving editor-provided emotion markers."""
+
+        kwargs: dict[str, object] = {
+            "ref_file": str(ref_audio),
+            "ref_text": ref_text,
+            "gen_text": text,
+        }
+        kwargs.update(settings or {})
+        result = QwenVoiceService._call_supported(model.infer, kwargs)
+        try:
+            audio, sample_rate, _spectrogram = result
+        except (TypeError, ValueError) as error:
+            raise VoiceGenerationError(
+                "La version installée de F5-TTS a renvoyé un résultat inattendu."
+            ) from error
+        return audio, int(sample_rate)
 
     def _load_pocket_engine(self, load_options: dict[str, object]) -> Any:
         """Load Pocket TTS with the requested language bundle and options.

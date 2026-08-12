@@ -7,10 +7,19 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Thread
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from PyQt6.QtCore import QEvent, QObject, Qt, QThread, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QDesktopServices, QIcon, QKeyEvent, QKeySequence
+from PyQt6.QtGui import (
+    QAction,
+    QColor,
+    QDesktopServices,
+    QIcon,
+    QKeyEvent,
+    QKeySequence,
+    QTextCharFormat,
+    QTextCursor,
+)
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -48,6 +57,13 @@ from PyQt6.QtWidgets import (
 from soundmaster.core.audio_capture import SystemAudioRecorder, wasapi_output_devices
 from soundmaster.core.config import AppConfig, AppPaths
 from soundmaster.core.fast_audio import FastAudioEngine
+from soundmaster.core.f5_emotions import (
+    EMOTION_FORMAT_PROPERTY,
+    F5_EMOTIONS,
+    F5_EMOTION_BY_KEY,
+    EmotionSpan,
+    render_emotion_tags,
+)
 from soundmaster.core.models import (
     MODEL_PROFILES,
     ModelProfile,
@@ -57,7 +73,6 @@ from soundmaster.core.models import (
     is_downloaded,
     model_size_str,
 )
-from soundmaster.resources import get_app_icon, get_icon, get_settings_icon
 from soundmaster.core.myinstants import (
     MyInstantResult,
     MyInstantsError,
@@ -76,12 +91,16 @@ from soundmaster.core.tts import (
 )
 from soundmaster.data.library import SoundItem, SoundLibrary
 from soundmaster.hotkeys import HotkeyManager
+from soundmaster.resources import get_app_icon, get_icon, get_settings_icon
 from soundmaster.ui.audio_preview import AudioPreviewBar
 from soundmaster.ui.legal_settings import LegalSettingsWidget
 from soundmaster.ui.myinstants_widgets import MyInstantCard
 from soundmaster.ui.theme import APP_STYLE, animate_opacity
 from soundmaster.ui.update_settings import UpdateSettingsPanel
 from soundmaster.ui.voice_consent import CONSENT_PREFERENCE_KEY, VoiceConsentPanel
+
+if TYPE_CHECKING:
+    from soundmaster.core.legal import LegalProfile
 
 try:
     from PyQt6.QtMultimedia import (
@@ -103,6 +122,22 @@ except ImportError:  # pragma: no cover - optional platform runtime
     QMediaRecorder = None  # type: ignore[assignment,misc]
 
 
+# One language choice drives every engine: Pocket TTS loads its dedicated
+# bundle, Qwen3-TTS / OmniVoice use it at generation time, and "Auto" lets
+# each engine pick its own default. The visible label is French; the data is
+# the canonical token shared with the saved voices and the engines.
+VOICE_LANGUAGES: tuple[tuple[str, str], ...] = (
+    ("Français", "French"),
+    ("English", "English"),
+    ("Deutsch", "German"),
+    ("Español", "Spanish"),
+    ("Italiano", "Italian"),
+    ("Português", "Portuguese"),
+    ("Auto (anglais par défaut)", "Auto"),
+)
+DEFAULT_LANGUAGE_PREFERENCE = "default_language"
+
+
 def _module_available(module_name: str) -> bool:
     """Check an optional module without allowing broken import metadata to escape."""
 
@@ -113,28 +148,52 @@ def _module_available(module_name: str) -> bool:
 
 
 def collect_gpu_diagnostics(paths: AppPaths) -> str:
-    """Return actionable local TTS/GPU diagnostics without importing torch at startup."""
+    """Return actionable local TTS/GPU diagnostics without importing torch at startup.
 
+    Pocket TTS is the default engine and runs on the CPU with no GPU and no
+    PyTorch, so a missing CUDA stack is not an error on a fresh install: the
+    report focuses on what the user actually needs for their chosen engine.
+    """
+
+    pocket_runtime = _module_available("pocket_tts")
     qwen_runtime = _module_available("qwen_tts")
     soundfile_runtime = _module_available("soundfile")
-    model_ready = is_downloaded(get_profile("qwen3-tts"), paths)
-    runtime_state = (
-        "installé" if qwen_runtime and soundfile_runtime else "incomplet"
-    )
+    qwen_model_ready = is_downloaded(get_profile("qwen3-tts"), paths)
     lines = [
-        f"Runtime Qwen3-TTS : {runtime_state}",
-        f"Modèle local : {'prêt' if model_ready else 'absent'}",
+        (
+            "Moteur par défaut (Pocket TTS) : installé — CPU uniquement, sans GPU ni PyTorch."
+            if pocket_runtime
+            else "Moteur par défaut (Pocket TTS) : absent — installez l’extra : "
+            "python -m pip install \"soundmaster[pocket]\"."
+        ),
+        f"Runtime Qwen3-TTS (optionnel) : {'installé' if qwen_runtime else 'non installé'}",
+        f"Modèle Qwen local : {'prêt' if qwen_model_ready else 'non téléchargé'}",
+        f"Décodage audio basse latence : {'disponible' if soundfile_runtime else 'absent — relancez l’installation pour la lecture instantanée'}",
     ]
     try:
         import torch
     except ImportError:
-        lines.append("PyTorch : absent — lancez setup_gpu.bat pour NVIDIA ou installez l’extra CPU.")
+        lines.append(
+            "PyTorch : non installé (normal — il n’est utile que pour Qwen3-TTS, OmniVoice ou F5-TTS)."
+        )
+        if qwen_runtime or _module_available("f5_tts"):
+            lines.append("Action : lancez setup_gpu.bat (NVIDIA) ou setup_amd.bat (AMD), sinon installez l’extra CPU.")
+        return "\n".join(lines)
+
+    hip_version = getattr(torch.version, "hip", None)
+    if hip_version:
+        lines.extend(
+            (
+                f"PyTorch : {torch.__version__} (ROCm {hip_version}) — accélération AMD détectée",
+                "GPU AMD : support ROCm actif, génération accélérée disponible.",
+            )
+        )
         return "\n".join(lines)
 
     lines.append(f"PyTorch : {torch.__version__}")
     if not torch.cuda.is_available():
-        lines.append("Accélération : CPU — CUDA indisponible, génération plus lente.")
-        lines.append("Action : installez les pilotes NVIDIA puis lancez setup_gpu.bat.")
+        lines.append("Accélération : CPU — ni CUDA ni ROCm détectés, génération plus lente.")
+        lines.append("Action : installez les pilotes NVIDIA puis lancez setup_gpu.bat, ou les pilotes AMD puis setup_amd.bat.")
         return "\n".join(lines)
 
     device = torch.cuda.current_device()
@@ -152,6 +211,21 @@ def collect_gpu_diagnostics(paths: AppPaths) -> str:
         )
     )
     return "\n".join(lines)
+
+
+class EmotionTextEdit(QTextEdit):
+    """Text editor that reports when a mouse selection has been completed."""
+
+    selection_finished = pyqtSignal()
+
+    def mouseReleaseEvent(self, event) -> None:
+        super().mouseReleaseEvent(event)
+        self.selection_finished.emit()
+
+    def keyReleaseEvent(self, event) -> None:
+        super().keyReleaseEvent(event)
+        if self.textCursor().hasSelection():
+            self.selection_finished.emit()
 
 
 class ShortcutCaptureButton(QPushButton):
@@ -946,12 +1020,46 @@ class MainWindow(QMainWindow):
             "Testez d’abord une phrase courte pour vérifier que la voix vous convient, "
             "puis lancez la génération complète.",
         )
-        self.voice_text = QTextEdit()
+        self.voice_text = EmotionTextEdit()
         self.voice_text.setObjectName("voiceText")
         self.voice_text.setPlaceholderText("Ce que la voix doit dire…")
         self.voice_text.setMinimumHeight(110)
         self.voice_text.setMaximumHeight(260)
+        self.voice_text.selection_finished.connect(self._apply_active_f5_emotion)
         layout.addWidget(self.voice_text)
+
+        self.voice_emotion_toolbar = QWidget()
+        emotion_layout = QHBoxLayout(self.voice_emotion_toolbar)
+        emotion_layout.setContentsMargins(0, 0, 0, 0)
+        emotion_layout.setSpacing(5)
+        emotion_label = QLabel("Émotions F5-TTS")
+        emotion_label.setObjectName("sectionLabel")
+        emotion_layout.addWidget(emotion_label)
+        self.voice_emotion_buttons: dict[str, QPushButton] = {}
+        for emotion in F5_EMOTIONS:
+            button = QPushButton(emotion.label)
+            button.setCheckable(True)
+            button.setObjectName("emotionButton")
+            button.setToolTip(
+                f"{emotion.description}. Cliquez puis sélectionnez le texte à colorer. "
+                "Resélectionner la même émotion retire la couleur."
+            )
+            button.setStyleSheet(
+                f"QPushButton#emotionButton {{ color: {emotion.foreground}; "
+                f"background: {emotion.background}; border-color: {emotion.background}; }}"
+                f"QPushButton#emotionButton:checked {{ border: 2px solid #f8fafc; }}"
+            )
+            button.clicked.connect(
+                lambda _checked, key=emotion.key: self._select_f5_emotion(key)
+            )
+            emotion_layout.addWidget(button)
+            self.voice_emotion_buttons[emotion.key] = button
+        emotion_layout.addStretch(1)
+        self.voice_emotion_toolbar.setToolTip(
+            "Choisissez une émotion, puis surlignez la partie du texte concernée."
+        )
+        self.voice_emotion_toolbar.setVisible(False)
+        layout.addWidget(self.voice_emotion_toolbar)
 
         action_bar = QHBoxLayout()
         action_bar.setSpacing(8)
@@ -1049,20 +1157,13 @@ class MainWindow(QMainWindow):
         self.voice_engine.setToolTip(
             "Choisissez le moteur vocal. F5-TTS permet de contrôler les émotions par des balises [sad], [happy], etc."
         )
-        default_engine = self.library.preference("default_voice_engine", "qwen3-tts")
+        default_engine = self.library.preference("default_voice_engine", "pocket-tts")
         default_idx = self.voice_engine.findData(default_engine)
         if default_idx >= 0:
             self.voice_engine.setCurrentIndex(default_idx)
         self.voice_engine.currentIndexChanged.connect(self._voice_engine_changed)
         advanced_form.addWidget(QLabel("Moteur vocal"), 0, 0)
         advanced_form.addWidget(self.voice_engine, 0, 1)
-
-        self.voice_emotion_prompt_label = QLabel("Prompt Émotions")
-        self.voice_emotion_prompt = QLineEdit()
-        self.voice_emotion_prompt.setPlaceholderText("Ex: [sad] Je me sens triste... [happy] mais tout va bien !")
-        self.voice_emotion_prompt.setToolTip("Contrôlez les émotions avec des balises textuelles (ex: [sad], [happy], [angry], [whispering])")
-        advanced_form.addWidget(self.voice_emotion_prompt_label, 1, 0)
-        advanced_form.addWidget(self.voice_emotion_prompt, 1, 1)
 
         self.voice_reference_text = QLineEdit()
         self.voice_reference_text.setPlaceholderText(
@@ -1079,19 +1180,17 @@ class MainWindow(QMainWindow):
         self.voice_language = QComboBox()
         # The visible label is French; the data stays the canonical engine token
         # so saved voices and the other engines keep working unchanged.
-        for label, token in (
-            ("Français", "French"),
-            ("English", "English"),
-            ("Deutsch", "German"),
-            ("Español", "Spanish"),
-            ("Italiano", "Italian"),
-            ("Português", "Portuguese"),
-            ("Auto (anglais par défaut)", "Auto"),
-        ):
+        for label, token in VOICE_LANGUAGES:
             self.voice_language.addItem(label, token)
+        # Start from the global default language chosen in the settings.
+        default_lang = self.library.preference(DEFAULT_LANGUAGE_PREFERENCE, "French")
+        default_lang_index = self.voice_language.findData(default_lang)
+        if default_lang_index >= 0:
+            self.voice_language.setCurrentIndex(default_lang_index)
         self.voice_language.setToolTip(
-            "Pocket TTS possède un modèle par langue : choisissez-la ici, sinon "
-            "le modèle anglais par défaut est utilisé."
+            "Langue utilisée pour ce clonage. La langue par défaut se choisit "
+            "dans Paramètres : Pocket TTS charge son modèle dédié, Qwen3-TTS et "
+            "OmniVoice l’utilisent à la génération."
         )
         self.voice_language.currentIndexChanged.connect(
             lambda _index: self._sync_pocket_quality_control()
@@ -1305,7 +1404,7 @@ class MainWindow(QMainWindow):
         self.keybind_table.setAlternatingRowColors(True)
         layout.addWidget(self.keybind_table, 1)
         actions = QHBoxLayout()
-        self.hotkey_toggle = QPushButton("Activer dans Windows")
+        self.hotkey_toggle = QPushButton("Activer les raccourcis")
         self.hotkey_toggle.clicked.connect(self._toggle_hotkeys)
         actions.addWidget(self.hotkey_toggle)
         actions.addWidget(QLabel("Les changements sont enregistrés automatiquement."))
@@ -1347,12 +1446,52 @@ class MainWindow(QMainWindow):
         self.voice_consent.changed.connect(self._set_voice_cloning_consent)
         self.voice_consent.open_requested.connect(lambda: self._select_page(1))
         inner_layout.addWidget(self.voice_consent)
+        inner_layout.addWidget(self._voice_language_settings_group())
         inner_layout.addWidget(self._voice_models_settings_group())
         inner_layout.addStretch(1)
         scroll.setWidget(inner)
         self.voice_consent_scroll = scroll
         layout.addWidget(scroll, 1)
         return tab
+
+    def _voice_language_settings_group(self) -> QGroupBox:
+        """Global default language, applied to every cloning engine."""
+
+        group = QGroupBox("Langue par défaut (tous les moteurs)")
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+        intro = QLabel(
+            "Choisie une seule fois ici, la langue est appliquée par défaut à tous "
+            "les modèles : Pocket TTS charge son modèle dédié (français, anglais, "
+            "etc.), Qwen3-TTS et OmniVoice l’utilisent à la génération. "
+            "« Auto » laisse chaque moteur choisir son réglage."
+        )
+        intro.setObjectName("muted")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        self.default_language = QComboBox()
+        for label, token in VOICE_LANGUAGES:
+            self.default_language.addItem(label, token)
+        saved = self.library.preference(DEFAULT_LANGUAGE_PREFERENCE, "French")
+        saved_index = self.default_language.findData(saved)
+        self.default_language.setCurrentIndex(max(0, saved_index))
+        self.default_language.currentIndexChanged.connect(self._default_language_changed)
+        layout.addWidget(self.default_language)
+        return group
+
+    def _default_language_changed(self, _index: int) -> None:
+        token = str(self.default_language.currentData() or "French")
+        self.library.set_preference(DEFAULT_LANGUAGE_PREFERENCE, token)
+        # Follow in the voice page for the current editing session, so the new
+        # default applies immediately without forcing the user to re-pick it.
+        if hasattr(self, "voice_language"):
+            voice_index = self.voice_language.findData(token)
+            if voice_index >= 0:
+                self.voice_language.setCurrentIndex(voice_index)
+        self.statusBar().showMessage(
+            f"Langue par défaut : {self.default_language.currentText()}", 4000
+        )
 
     def _voice_models_settings_group(self) -> QGroupBox:
         group = QGroupBox("Modèles de clonage de voix (Gestion & Sélection)")
@@ -1530,8 +1669,9 @@ class MainWindow(QMainWindow):
         apply_audio.clicked.connect(self._apply_audio_devices)
         audio_form.addRow(apply_audio)
         hint = QLabel(
-            "SoundMaster ne fournit pas de câble virtuel. Installez VB-CABLE ou un "
-            "équivalent, puis sélectionnez-le ici."
+            "La sortie 2 sert à envoyer un son dans un jeu (via VB-CABLE ou équivalent). "
+            "Rien n’est requis pour utiliser SoundMaster en local : laissez « Aucun (désactivé) » "
+            "si vous n’avez pas installé de câble virtuel."
         )
         hint.setWordWrap(True)
         audio_form.addRow(hint)
@@ -1790,6 +1930,11 @@ class MainWindow(QMainWindow):
             self._recent_cards,
             self._grid_columns(self.card_container.width()),
         )
+        # Recent cards also expose a "Tester" button: decode them into the
+        # zero-latency cache too, so a click never waits for the file I/O.
+        for sound in recent:
+            if Path(sound.path).is_file():
+                self._fast_audio.preload_sound(sound.path)
         has_recent = bool(self._recent_cards)
         self.recent_header.setVisible(has_recent)
         self.recent_hint.setVisible(has_recent)
@@ -1932,6 +2077,10 @@ class MainWindow(QMainWindow):
         if not self.microphone_input.count():
             self.microphone_input.addItem("Aucun microphone détecté")
         outputs = list(QMediaDevices.audioOutputs())
+        # The second output is a power-user option: a virtual cable is only
+        # needed to route sounds into a game. Beginners must never be forced
+        # to install or pick one, so "Aucun" is the default choice.
+        self.virtual_output.addItem("Aucun (désactivé)", None)
         for device in outputs:
             self.headset_output.addItem(device.description(), device)
             self.virtual_output.addItem(device.description(), device)
@@ -1951,11 +2100,13 @@ class MainWindow(QMainWindow):
         if QAudioOutput is None or not self._audio_outputs:
             self.statusBar().showMessage("QtMultimedia indisponible", 5000)
             return
-        if self.headset_output.currentText() == self.virtual_output.currentText():
-            QMessageBox.warning(self, "Sorties identiques", "Sélectionnez deux périphériques distincts.")
-            return
+        headset_text = self.headset_output.currentText()
+        virtual_device = self.virtual_output.currentData()
+        # A second output is optional: "Aucun" or picking the same device
+        # simply means every sound plays on the headset output.
+        virtual_disabled = virtual_device is None or self.virtual_output.currentText() == headset_text
         for key, virtual, combo in (("headset_device", False, self.headset_output), ("virtual_device", True, self.virtual_output)):
-            device = combo.currentData()
+            device = None if (virtual and virtual_disabled) else combo.currentData()
             if device is not None:
                 self._audio_outputs[virtual].setDevice(device)
                 self.library.set_preference(key, combo.currentText())
@@ -1963,7 +2114,10 @@ class MainWindow(QMainWindow):
                     # Voice previews follow the headset, never the virtual cable.
                     for player in (self.voice_sample_player, self.voice_result_player):
                         player.set_device(device)
-        self._fast_audio.set_devices(self.headset_output.currentText(), self.virtual_output.currentText())
+        self._fast_audio.set_devices(
+            self.headset_output.currentData() if headset_text else None,
+            None if virtual_disabled else virtual_device,
+        )
         self.library.set_preference("microphone_device", self.microphone_input.currentText())
         if self._hotkeys.active:
             self._prepare_hotkey_players()
@@ -2029,12 +2183,15 @@ class MainWindow(QMainWindow):
         so that either "Tester" or "Envoyer" starts with near-zero latency.
         """
 
-        if QMediaPlayer is None:
-            return
         matches = [item for item in self.library.sounds() if item.id == sound_id]
         if not matches:
             return
         path = str(Path(matches[0].path))
+        # Decode into the zero-latency PCM cache while the pointer travels, so
+        # the click only queues the buffer instead of decoding the file.
+        self._fast_audio.preload_sound(path)
+        if QMediaPlayer is None:
+            return
         for virtual in (False, True):
             player = self._players.get(virtual)
             if player is None:
@@ -2258,7 +2415,7 @@ class MainWindow(QMainWindow):
         self._refresh_dashboard()
 
     def _voice_settings(self) -> dict[str, object]:
-        """Return generation controls including emotion prompt for F5-TTS."""
+        """Return generation controls; F5 emotion markers live in the text."""
 
         return {
             "temperature": self.voice_temperature.value(),
@@ -2268,8 +2425,89 @@ class MainWindow(QMainWindow):
             "pocket_high_quality": self.voice_high_quality.isChecked(),
             "pocket_quantize": self.voice_quantize.isChecked(),
             "pocket_mirror": self.library.preference(MIRROR_PREFERENCE_KEY, DEFAULT_MIRROR_REPO),
-            "emotion_prompt": self.voice_emotion_prompt.text() if hasattr(self, "voice_emotion_prompt") else "",
+            # Kept for compatibility with older workers; the editor now embeds
+            # the markers directly into the generation text.
+            "emotion_prompt": "",
         }
+
+    def _select_f5_emotion(self, emotion_key: str) -> None:
+        """Select an emotion and apply/toggle it when text is already selected."""
+
+        if emotion_key not in F5_EMOTION_BY_KEY:
+            return
+        self._active_f5_emotion = emotion_key
+        for key, button in self.voice_emotion_buttons.items():
+            button.setChecked(key == emotion_key)
+        self._apply_active_f5_emotion()
+
+    def _char_f5_emotion(self, position: int) -> str | None:
+        cursor = QTextCursor(self.voice_text.document())
+        cursor.setPosition(position)
+        cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor)
+        value = cursor.charFormat().property(EMOTION_FORMAT_PROPERTY)
+        return value if isinstance(value, str) and value in F5_EMOTION_BY_KEY else None
+
+    def _apply_active_f5_emotion(self) -> None:
+        """Apply the selected palette emotion, or remove it when toggled."""
+
+        emotion_key = getattr(self, "_active_f5_emotion", None)
+        cursor = self.voice_text.textCursor()
+        if not emotion_key or not cursor.hasSelection():
+            return
+        start, end = sorted((cursor.selectionStart(), cursor.selectionEnd()))
+        if start == end:
+            return
+        spans = self._f5_emotion_spans(self.voice_text.toPlainText())
+        remove = all(
+            any(span.start <= position < span.end and span.emotion == emotion_key for span in spans)
+            for position in range(start, end)
+        )
+        if remove:
+            # ``mergeCharFormat`` cannot remove a property that is absent from
+            # the format being merged, so clear the selected format explicitly.
+            format_ = cursor.charFormat()
+            format_.clearBackground()
+            format_.clearForeground()
+            format_.clearProperty(EMOTION_FORMAT_PROPERTY)
+            cursor.setCharFormat(format_)
+        else:
+            format_ = QTextCharFormat()
+            emotion = F5_EMOTION_BY_KEY[emotion_key]
+            format_.setBackground(QColor(emotion.background))
+            format_.setForeground(QColor(emotion.foreground))
+            format_.setProperty(EMOTION_FORMAT_PROPERTY, emotion_key)
+            cursor.mergeCharFormat(format_)
+        self.voice_text.setTextCursor(cursor)
+
+    def _f5_emotion_spans(self, text: str) -> list[EmotionSpan]:
+        """Read contiguous emotion formatting ranges from the visible editor."""
+
+        spans: list[EmotionSpan] = []
+        active: str | None = None
+        start = 0
+        for position in range(len(text)):
+            emotion = self._char_f5_emotion(position)
+            if emotion == active:
+                continue
+            if active is not None and start < position:
+                spans.append(EmotionSpan(start, position, active))
+            active = emotion
+            start = position
+        if active is not None and start < len(text):
+            spans.append(EmotionSpan(start, len(text), active))
+        return spans
+
+    def _f5_generation_text(self, test_mode: bool = False) -> str:
+        """Convert editor colours into F5 markers only for an F5 generation."""
+
+        plain = self.voice_text.toPlainText()
+        limit = min(len(plain), 120) if test_mode else len(plain)
+        clipped = [
+            EmotionSpan(span.start, min(span.end, limit), span.emotion)
+            for span in self._f5_emotion_spans(plain)
+            if span.start < limit
+        ]
+        return render_emotion_tags(plain[:limit], clipped)
 
     def _voice_language(self) -> str:
         """Return the canonical engine token, not the translated label."""
@@ -2415,15 +2653,18 @@ class MainWindow(QMainWindow):
         self.voice_profile_name.clear()
         self._set_voice_sample(None)
         self.voice_reference_text.clear()
-        default_engine = self.library.preference("default_voice_engine", "qwen3-tts")
+        default_engine = self.library.preference("default_voice_engine", "pocket-tts")
         default_index = self.voice_engine.findData(default_engine)
         self.voice_engine.setCurrentIndex(default_index if default_index >= 0 else 0)
-        # A French application defaults to the French bundle: leaving it on the
-        # engine default would silently clone with the English model.
+        # The global default language drives the new voice. A French application
+        # defaults to the French bundle: leaving it on the engine default would
+        # silently clone with the English model.
         self.voice_profile_status.setText(
             "Nouvelle voix : donnez-lui un nom, puis capturez son échantillon à l'étape 2."
         )
-        self.voice_language.setCurrentIndex(max(0, self.voice_language.findData("French")))
+        default_lang = self.library.preference(DEFAULT_LANGUAGE_PREFERENCE, "French")
+        default_lang_index = self.voice_language.findData(default_lang)
+        self.voice_language.setCurrentIndex(max(0, default_lang_index))
         self.voice_high_quality.setChecked(False)
         self.voice_quantize.setChecked(False)
         self.voice_temperature.setValue(0.7)
@@ -2708,9 +2949,8 @@ class MainWindow(QMainWindow):
         is_pocket = engine_key == "pocket-tts"
         is_f5 = engine_key == "f5-tts"
 
-        if hasattr(self, "voice_emotion_prompt"):
-            self.voice_emotion_prompt.setVisible(is_f5)
-            self.voice_emotion_prompt_label.setVisible(is_f5)
+        if hasattr(self, "voice_emotion_toolbar"):
+            self.voice_emotion_toolbar.setVisible(is_f5)
 
         self.voice_reference_text.setEnabled(not is_pocket and not is_f5)
         if is_pocket:
@@ -2859,9 +3099,15 @@ class MainWindow(QMainWindow):
         )
         self._voice_test_mode = test_mode
         self._voice_thread = QThread(self)
-        requested_engine = str(self.voice_engine.currentData() or "qwen3-tts")
+        requested_engine = str(self.voice_engine.currentData() or "pocket-tts")
         if not is_engine_runtime_installed(requested_engine):
-            fallback_engine = "qwen3-tts" if is_engine_runtime_installed("qwen3-tts") else "omnivoice"
+            fallback_engine = (
+                "pocket-tts"
+                if is_engine_runtime_installed("pocket-tts")
+                else "qwen3-tts"
+                if is_engine_runtime_installed("qwen3-tts")
+                else "omnivoice"
+            )
             if requested_engine != fallback_engine:
                 self.statusBar().showMessage(
                     f"Runtime {requested_engine} indisponible — bascule automatique sur {fallback_engine}.",
@@ -2872,6 +3118,8 @@ class MainWindow(QMainWindow):
                     self.voice_engine.setCurrentIndex(idx)
                 requested_engine = fallback_engine
 
+        if requested_engine == "f5-tts":
+            text = self._f5_generation_text(test_mode)
         self._active_voice_engine = requested_engine
         settings = self._voice_settings()
         self._voice_worker = VoiceWorker(
@@ -3379,16 +3627,16 @@ class MainWindow(QMainWindow):
         self._hotkeys.stop()
         bindings = self.library.keybinds()
         if not bindings:
-            self.hotkey_toggle.setText("Activer dans Windows")
+            self.hotkey_toggle.setText("Activer les raccourcis")
             self.statusBar().showMessage("Tous les raccourcis ont été effacés", 3000)
             return
         sounds = {item.id: item for item in self.library.sounds("", True)}
         try:
             self._hotkeys.start(bindings, self.hotkey_play_requested.emit, sounds)
             self._prepare_hotkey_players()
-            self.hotkey_toggle.setText("Désactiver dans Windows")
+            self.hotkey_toggle.setText("Désactiver les raccourcis")
         except RuntimeError as error:
-            self.hotkey_toggle.setText("Activer dans Windows")
+            self.hotkey_toggle.setText("Activer les raccourcis")
             QMessageBox.warning(self, "Raccourcis indisponibles", str(error))
 
     def _toggle_hotkeys(self) -> None:
@@ -3396,12 +3644,12 @@ class MainWindow(QMainWindow):
             if self._hotkeys.active:
                 self._hotkeys.stop()
                 self._release_hotkey_players()
-                self.hotkey_toggle.setText("Activer dans Windows")
+                self.hotkey_toggle.setText("Activer les raccourcis")
                 return
             sounds = {item.id: item for item in self.library.sounds("", True)}
             self._hotkeys.start(self.library.keybinds(), self.hotkey_play_requested.emit, sounds)
             self._prepare_hotkey_players()
-            self.hotkey_toggle.setText("Désactiver dans Windows")
+            self.hotkey_toggle.setText("Désactiver les raccourcis")
         except RuntimeError as error:
             QMessageBox.warning(self, "Raccourcis indisponibles", str(error))
 

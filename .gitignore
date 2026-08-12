@@ -23,6 +23,7 @@ build-*/
 dist-*/
 release/
 *.spec.bak
+build-*.log
 
 # SoundMaster runtime data
 .runtime/

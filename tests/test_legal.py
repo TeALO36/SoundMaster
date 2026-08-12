@@ -31,16 +31,23 @@ def _completed_profile() -> LegalProfile:
 
 def test_new_profile_has_safe_technical_defaults_but_is_not_ready() -> None:
     profile = LegalProfile()
+    # The profile ships pre-filled with the open-source project identity so a
+    # fresh install never confronts the user with an empty publisher form.
     assert profile.publisher.country == "France"
+    assert profile.publisher.legal_name == "SoundMaster — projet open source"
+    assert profile.publisher.support_url == "https://github.com/TeALO36/SoundMaster/issues"
     assert profile.documents.qwen_model_id == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-    assert profile.documents.qwen_notice_reference == ""
+    assert profile.documents.qwen_notice_reference != ""
     assert profile.documents.qwen_model_revision == ""
     assert profile.documents.qwen_model_sha256 == ""
 
     ready, reasons = profile.commercial_readiness()
 
     assert ready is False
-    assert "Nom légal de l’éditeur manquant" in reasons
+    # The pre-filled fields no longer trigger a missing-publisher error; the
+    # gate still blocks on the address, contact e-mail and the review checks.
+    assert "Nom légal de l’éditeur manquant" not in reasons
+    assert "Adresse de l’éditeur manquant" in reasons
     assert "Identité de l’éditeur vérifiée" in reasons
 
 
@@ -89,7 +96,10 @@ def test_myinstants_rights_are_required_only_when_enabled() -> None:
     profile = _completed_profile()
     assert profile.commercial_readiness()[0] is True
 
+    # The pre-filled default points at the project repository; simulate a
+    # publisher without written rights to verify the gate still blocks.
     profile.myinstants_enabled = True
+    profile.documents.myinstants_rights_reference = ""
     ready, reasons = profile.commercial_readiness()
 
     assert ready is False
