@@ -1243,11 +1243,26 @@ def test_pocket_install_warns_clearly_when_the_runtime_is_missing(
 def test_pocket_install_starts_a_weight_download_thread(
     qapp: QApplication, tmp_path: Path, monkeypatch
 ) -> None:
-    """With the runtime present, installing downloads the weights in background."""
+    """With the runtime present, installing downloads the weights in background.
+
+    The runtime check is pinned to True so the test behaves identically whether
+    or not pocket_tts is installed in the environment: otherwise a CI runner
+    without the extra would take the warning path and block on a modal dialog.
+    """
 
     window = _unlocked_window(tmp_path)
     window.show()
     started: list[str] = []
+
+    from PyQt6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        "soundmaster.ui.main_window.is_engine_runtime_installed", lambda _key: True
+    )
+    monkeypatch.setattr(
+        "soundmaster.ui.main_window.QMessageBox.warning",
+        lambda *args: QMessageBox.StandardButton.Ok,
+    )
 
     class _SignalStub:
         def connect(self, *_args) -> None:
