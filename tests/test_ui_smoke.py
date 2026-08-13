@@ -11,10 +11,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 PyQt6 = pytest.importorskip("PyQt6")
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeyEvent, QTextCursor
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QPushButton
 
 from soundmaster.core.config import AppConfig, AppPaths
 from soundmaster.core.legal import LegalProfile
+from soundmaster.core.models import get_profile
 from soundmaster.core.myinstants import MyInstantResult
 from soundmaster.ui.legal_settings import LegalSettingsWidget, SettingsWindow
 from soundmaster.ui.main_window import MainWindow, ShortcutCaptureButton
@@ -291,7 +292,7 @@ def test_recorded_sample_is_immediately_playable(qapp: QApplication, tmp_path: P
     window.close()
 
 
-def test_generated_result_is_playable_and_test_runs_stay_out_of_history(
+def test_generated_result_is_playable_and_added_to_history(
     qapp: QApplication, tmp_path: Path
 ) -> None:
     window = _unlocked_window(tmp_path)
@@ -301,35 +302,15 @@ def test_generated_result_is_playable_and_test_runs_stay_out_of_history(
     generated.write_bytes(b"RIFF generated")
     window.voice_favorite.setChecked(False)
 
-    window._voice_test_mode = True
-    window._voice_finished(str(generated), "qwen3-tts", "Qwen/Qwen3-TTS", "Bonjour", str(sample))
-    assert window.library.voice_generations() == []
-    assert window.voice_result_player.source_path() == generated
-    assert window.voice_result_favorite_button.isEnabled() is True
-    assert window.voice_result_folder_button.isEnabled() is True
-
-    window._voice_test_mode = False
     window._voice_finished(str(generated), "qwen3-tts", "Qwen/Qwen3-TTS", "Bonjour", str(sample))
     generations = window.library.voice_generations()
     assert len(generations) == 1
     assert generations[0].output_path == str(generated)
     assert window.voice_history.count() == 1
     assert window.voice_history.item(0).data(Qt.ItemDataRole.UserRole) == str(generated)
-
-    window._allow_close = True
-    window.close()
-
-
-def test_test_phrase_falls_back_to_a_built_in_sentence(
-    qapp: QApplication, tmp_path: Path
-) -> None:
-    window = _unlocked_window(tmp_path)
-
-    assert window._test_phrase() == MainWindow._VOICE_TEST_SENTENCE
-    window.voice_text.setPlainText("  Salut   les   amis  ")
-    assert window._test_phrase() == "Salut les amis"
-    window.voice_text.setPlainText("a" * 400)
-    assert len(window._test_phrase()) == 120
+    assert window.voice_result_player.source_path() == generated
+    assert window.voice_result_favorite_button.isEnabled() is True
+    assert window.voice_result_folder_button.isEnabled() is True
 
     window._allow_close = True
     window.close()
@@ -379,7 +360,6 @@ def test_voice_layout_reflows_at_compact_width_without_hiding_actions(
     assert window.minimumHeight() >= 680
     assert window.voice_text.isVisibleTo(window)
     assert window.voice_generate_button.isVisibleTo(window)
-    assert window.voice_test_button.isVisibleTo(window)
     assert window.voice_save_button.isVisibleTo(window)
     assert window.voice_sample_player.isVisibleTo(window)
     assert window.voice_result_player.isVisibleTo(window)
@@ -1144,7 +1124,7 @@ def test_engine_fallback_never_switches_to_an_engine_without_its_runtime(
     sample.write_bytes(b"RIFF")
     window._set_voice_sample(sample)
     window.voice_text.setPlainText("Bonjour")
-    window._start_voice_generation(False)
+    window._start_voice_generation()
 
     assert window.voice_engine.currentData() == "pocket-tts"  # no silent switch
     assert window._voice_thread is None  # nothing was started
@@ -1188,7 +1168,7 @@ def test_engine_fallback_uses_the_first_installed_alternative(
     sample.write_bytes(b"RIFF")
     window._set_voice_sample(sample)
     window.voice_text.setPlainText("Bonjour")
-    window._start_voice_generation(False)
+    window._start_voice_generation()
 
     assert window.voice_engine.currentData() == "pocket-tts"
     assert "bascule automatique" in window.statusBar().currentMessage()
@@ -1197,6 +1177,99 @@ def test_engine_fallback_uses_the_first_installed_alternative(
     if window._voice_thread is not None:
         window._voice_thread.quit()
         window._voice_thread.wait(2000)
+    window._allow_close = True
+    window.close()
+
+
+def test_pocket_tts_card_always_offers_install_or_reinstall(
+    qapp: QApplication, tmp_path: Path, monkeypatch
+) -> None:
+    """The default engine must stay (re)installable from the model cards.
+
+    Regression: pocket-tts was explicitly excluded from the download/delete
+    buttons, so a user without cached weights had no way to install it at all,
+    even though it is the selected default engine.
+    """
+
+    window = _unlocked_window(tmp_path)
+    window.show()
+
+    # Deterministic state: no cached weights, then cached weights.
+    monkeypatch.setattr("soundmaster.ui.main_window.pocket_weights_cached", lambda: False)
+    window._refresh_voice_model_settings()
+
+    def card_buttons() -> list[str]:
+        labels = []
+        for index in range(window.voice_models_cards_layout.count()):
+            widget = window.voice_models_cards_layout.itemAt(index).widget()
+            if widget is not None:
+                labels.extend(button.text() for button in widget.findChildren(QPushButton))
+        return labels
+
+    assert "Installer Pocket TTS" in card_buttons()
+
+    # Once the weights are cached, the same button turns into a reinstall offer.
+    monkeypatch.setattr("soundmaster.ui.main_window.pocket_weights_cached", lambda: True)
+    window._refresh_voice_model_settings()
+    assert "Réinstaller les poids" in card_buttons()
+
+    window._allow_close = True
+    window.close()
+
+
+def test_pocket_install_warns_clearly_when_the_runtime_is_missing(
+    qapp: QApplication, tmp_path: Path, monkeypatch
+) -> None:
+    from PyQt6.QtWidgets import QMessageBox
+
+    window = _unlocked_window(tmp_path)
+    monkeypatch.setattr(
+        "soundmaster.ui.main_window.is_engine_runtime_installed", lambda _key: False
+    )
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "soundmaster.ui.main_window.QMessageBox.warning",
+        lambda *args: warnings.append((args[1], args[2])) or QMessageBox.StandardButton.Ok,
+    )
+
+    window._install_pocket_tts(get_profile("pocket-tts"))
+    assert warnings, "a clear error must explain why Pocket TTS cannot be installed"
+    assert "Pocket TTS" in warnings[0][1]
+
+    window._allow_close = True
+    window.close()
+
+
+def test_pocket_install_starts_a_weight_download_thread(
+    qapp: QApplication, tmp_path: Path, monkeypatch
+) -> None:
+    """With the runtime present, installing downloads the weights in background."""
+
+    window = _unlocked_window(tmp_path)
+    window.show()
+    started: list[str] = []
+
+    class _SignalStub:
+        def connect(self, *_args) -> None:
+            return None
+
+    class _FakeInstallThread:
+        def __init__(self, service, language, settings, parent=None) -> None:
+            self.language = language
+            self.finished_signal = _SignalStub()
+
+        def start(self) -> None:
+            started.append(self.language)
+
+    monkeypatch.setattr(
+        "soundmaster.ui.main_window.PocketInstallThread", _FakeInstallThread
+    )
+    monkeypatch.setattr("soundmaster.ui.main_window.pocket_weights_cached", lambda: False)
+
+    window._install_pocket_tts(get_profile("pocket-tts"))
+    assert started == [window._pocket_install_language()]
+    assert "téléchargement des poids" in window.statusBar().currentMessage()
+
     window._allow_close = True
     window.close()
 

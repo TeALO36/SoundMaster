@@ -257,6 +257,46 @@ def test_pocket_tts_does_not_require_a_managed_snapshot(
     assert loaded, "the engine must still be loaded"
 
 
+def test_pocket_preload_downloads_the_bundle_then_releases_the_engine(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The install action loads the bundle (which downloads the weights) and
+    must not keep a multi-hundred-MB model resident afterwards."""
+
+    from soundmaster.core.tts import QwenVoiceService, VoiceGenerationError
+
+    service = QwenVoiceService(_paths(tmp_path))
+    loaded: list[tuple[object, str, object]] = []
+    monkeypatch.setattr(
+        service,
+        "_load_engine",
+        lambda local_model, engine_key, load_options=None: (
+            loaded.append((local_model, engine_key, load_options)) or _FakePocketModel()
+        ),
+    )
+    monkeypatch.setattr(
+        "soundmaster.core.tts.is_engine_runtime_installed", lambda _key: True
+    )
+
+    service.preload_pocket_tts("French", {"temperature": 0.7})
+
+    assert len(loaded) == 1
+    _local_model, engine_key, load_options = loaded[0]
+    assert engine_key == "pocket-tts"
+    assert isinstance(load_options, dict)
+    assert load_options.get("language") == "french_24l"
+    assert load_options.get("temp") == 0.7
+    # Loading was only a warm-up: the engine is released right away.
+    assert service._model is None
+    assert service._engine_key is None
+
+    with pytest.raises(VoiceGenerationError, match=r"soundmaster\[pocket\]"):
+        monkeypatch.setattr(
+            "soundmaster.core.tts.is_engine_runtime_installed", lambda _key: False
+        )
+        service.preload_pocket_tts("French")
+
+
 def test_pocket_language_bundles_cover_the_six_published_languages() -> None:
     from soundmaster.core.tts import POCKET_LANGUAGE_BUNDLES, pocket_language_bundle
 

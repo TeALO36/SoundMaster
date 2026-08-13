@@ -42,9 +42,9 @@ Une fois déverrouillé, l’écran suit trois étapes :
    sortie Windows, ou importez un fichier. L’échantillon se charge dans le lecteur
    intégré : cliquez sur ▶ pour le réécouter autant de fois que nécessaire. Rien
    n’est joué sans que vous le demandiez.
-3. **Écrivez, testez, générez** — le bouton **Tester la voix** génère une phrase courte
-   et la joue immédiatement, pour vérifier le rendu avant de lancer la génération
-   complète. Les tests ne sont jamais ajoutés à l’historique ni aux favoris.
+3. **Écrivez et générez** — saisissez le texte à l’étape 3 puis cliquez sur **Générer**.
+   Le résultat s’écoute dans la carte Résultat et peut être réessayé autant de fois
+   que nécessaire avant d’être ajouté aux favoris.
 
 Le résultat s’écoute dans la carte **Résultat**, d’où il peut être ajouté aux favoris ou
 ouvert dans l’explorateur Windows. Un double-clic sur une ligne de l’historique la

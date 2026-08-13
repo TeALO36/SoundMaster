@@ -84,10 +84,12 @@ from soundmaster.core.pocket_mirror import (
     MIRROR_PREFERENCE_KEY,
 )
 from soundmaster.core.tts import (
+    POCKET_GATED_HINT,
     QwenVoiceService,
     VoiceGenerationError,
     is_engine_runtime_installed,
     pocket_has_quality_variant,
+    pocket_weights_cached,
 )
 from soundmaster.data.library import SoundItem, SoundLibrary
 from soundmaster.hotkeys import HotkeyManager
@@ -514,6 +516,42 @@ class ModelDownloadThread(QThread):
             self.finished_signal.emit(False, self.profile.key, str(err))
 
 
+class PocketInstallThread(QThread):
+    """Download the Pocket TTS weights through the runtime's own loader.
+
+    Loading the model is what triggers the weight download, so this runs on a
+    worker thread. A success is only reported when the voice-cloning weights of
+    the gated ``kyutai/pocket-tts`` repository actually landed in the cache:
+    the runtime otherwise silently falls back to a build that cannot clone.
+    """
+
+    finished_signal = pyqtSignal(bool, str)
+
+    def __init__(
+        self,
+        service: QwenVoiceService,
+        language: str,
+        settings: dict[str, object] | None,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.service = service
+        self.language = language
+        self.settings = settings
+
+    def run(self) -> None:
+        try:
+            self.service.preload_pocket_tts(self.language, self.settings)
+            if not pocket_weights_cached():
+                raise VoiceGenerationError(POCKET_GATED_HINT)
+            self.finished_signal.emit(
+                True,
+                "Pocket TTS installé : les poids vocaux sont prêts à l'emploi.",
+            )
+        except Exception as error:  # noqa: BLE001 - surfaced to the UI dialog.
+            self.finished_signal.emit(False, str(error))
+
+
 class VoiceWorker(QObject):
     finished = pyqtSignal(str, str, str, str, str, float)
     failed = pyqtSignal(str)
@@ -585,7 +623,6 @@ class MainWindow(QMainWindow):
     # playing the headset output, so the "Stop" state on the cards is released.
     _fast_audio_finished = pyqtSignal()
 
-    _VOICE_TEST_SENTENCE = "Bonjour, ceci est un test de ma voix clonée avec SoundMaster."
     _MIC_BUTTON_LABEL = "● Enregistrer au micro"
     _SYSTEM_BUTTON_LABEL = "◉ Capturer la sortie audio"
     _MIC_BUTTON_HINT = "Enregistrer un échantillon de 3 à 10 secondes avec le microphone"
@@ -643,7 +680,6 @@ class MainWindow(QMainWindow):
         self._bulk_active = False
         self._voice_generation_ok = False
         self._voice_ui_generation = 0
-        self._voice_test_mode = False
         self._voice_consent_pending_redirect = False
         self._last_generation_path: Path | None = None
         self._last_generation_title = ""
@@ -1087,15 +1123,6 @@ class MainWindow(QMainWindow):
 
         action_bar = QHBoxLayout()
         action_bar.setSpacing(8)
-        self.voice_test_button = QPushButton("Tester la voix")
-        self.voice_test_button.setIcon(get_icon("headphones"))
-        self.voice_test_button.setObjectName("secondaryButton")
-        self.voice_test_button.setToolTip(
-            "Génère une phrase courte et la joue immédiatement, pour vérifier le rendu "
-            "avant la génération complète"
-        )
-        self.voice_test_button.clicked.connect(self._test_voice)
-        action_bar.addWidget(self.voice_test_button, 1)
         self.voice_generate_button = QPushButton("Générer")
         self.voice_generate_button.setIcon(get_icon("sparkle"))
         self.voice_generate_button.setObjectName("primaryButton")
@@ -1571,11 +1598,32 @@ class MainWindow(QMainWindow):
             info_layout.addWidget(desc_lbl)
 
             downloaded = is_downloaded(profile, self.paths)
-            size_text = model_size_str(profile, self.paths)
-            avg_time = self.library.avg_generation_time(profile.key)
-            time_text = f"~{avg_time:.1f} s" if avg_time is not None else "Aucune donnée (premier essai requis)"
-
-            status_lbl = QLabel(f"Taille : {size_text}  ·  ⏱ Temps moyen de génération : {time_text}")
+            if profile.key == "pocket-tts":
+                # Pocket TTS ships its weights inside the runtime cache, not in
+                # the managed model folder, so the generic size label would
+                # always read "Non installé". Report the two real signals: the
+                # bundled runtime and the voice-cloning weights in the cache.
+                # find_spec is used (not is_engine_runtime_installed) because
+                # importing pocket_tts drags in torch and costs seconds on
+                # every settings rebuild.
+                runtime_ok = _module_available("pocket_tts")
+                weights_ok = pocket_weights_cached()
+                runtime_text = "intégré ✓" if runtime_ok else "absent"
+                weights_text = "installés ✓" if weights_ok else "à télécharger"
+                status_lbl = QLabel(
+                    f"Runtime : {runtime_text}  ·  Poids vocaux : {weights_text}"
+                )
+            else:
+                size_text = model_size_str(profile, self.paths)
+                avg_time = self.library.avg_generation_time(profile.key)
+                time_text = (
+                    f"~{avg_time:.1f} s"
+                    if avg_time is not None
+                    else "Aucune donnée (premier essai requis)"
+                )
+                status_lbl = QLabel(
+                    f"Taille : {size_text}  ·  ⏱ Temps moyen de génération : {time_text}"
+                )
             status_lbl.setObjectName("muted")
             info_layout.addWidget(status_lbl)
 
@@ -1591,13 +1639,33 @@ class MainWindow(QMainWindow):
             select_btn.clicked.connect(lambda _, k=profile.key: self._set_default_voice_engine(k))
             actions_layout.addWidget(select_btn)
 
-            if not downloaded and profile.key != "pocket-tts":
+            if profile.key == "pocket-tts":
+                # The weights travel with the runtime, so the only "install"
+                # action is to download them (or repair them) through the
+                # engine itself. The button stays available even when Pocket
+                # TTS is the active default engine.
+                install_btn = QPushButton(
+                    "Réinstaller les poids"
+                    if pocket_weights_cached()
+                    else "Installer Pocket TTS"
+                )
+                install_btn.setObjectName("compactButton")
+                install_btn.setToolTip(
+                    "Télécharge les poids du clonage vocal Pocket TTS "
+                    "(~300 Mo, premier usage inclus). Utile après une mise à "
+                    "jour ou un nettoyage du cache Hugging Face."
+                )
+                install_btn.clicked.connect(
+                    lambda _checked=False, p=profile: self._install_pocket_tts(p)
+                )
+                actions_layout.addWidget(install_btn)
+            elif not downloaded:
                 dl_btn = QPushButton("Télécharger")
                 dl_btn.setObjectName("compactButton")
                 dl_btn.setToolTip(f"Télécharger {profile.key} ({profile.approximate_storage})")
                 dl_btn.clicked.connect(lambda _, p=profile: self._download_voice_model(p))
                 actions_layout.addWidget(dl_btn)
-            elif downloaded and profile.key != "pocket-tts":
+            elif downloaded:
                 del_btn = QPushButton("Supprimer")
                 del_btn.setObjectName("compactButton")
                 del_btn.setStyleSheet(
@@ -1614,7 +1682,24 @@ class MainWindow(QMainWindow):
     def _set_default_voice_engine(self, engine_key: str) -> None:
         self.library.set_preference("default_voice_engine", engine_key)
         profile = get_profile(engine_key)
-        if not is_downloaded(profile, self.paths) and engine_key != "pocket-tts":
+        if engine_key == "pocket-tts":
+            # The runtime is bundled with the app; only the weights can be
+            # missing, and they are downloaded through the engine itself.
+            if (
+                is_engine_runtime_installed("pocket-tts")
+                and not pocket_weights_cached()
+            ):
+                ans = QMessageBox.question(
+                    self,
+                    "Installer Pocket TTS ?",
+                    "Pocket TTS est maintenant le moteur par défaut, mais ses "
+                    "poids vocaux ne sont pas encore téléchargés. Les "
+                    "télécharger maintenant (~300 Mo) ?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if ans == QMessageBox.StandardButton.Yes:
+                    self._install_pocket_tts(profile)
+        elif not is_downloaded(profile, self.paths):
             ans = QMessageBox.question(
                 self,
                 "Télécharger le modèle ?",
@@ -1643,6 +1728,54 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(message, 5000)
         else:
             QMessageBox.warning(self, "Téléchargement échoué", message)
+        self._refresh_voice_model_settings()
+
+    def _install_pocket_tts(self, profile: ModelProfile) -> None:
+        """Download (or repair) the Pocket TTS voice-cloning weights.
+
+        The download runs inside the engine's own loader on a worker thread;
+        once cached, first generation no longer pays the download cost.
+        """
+
+        if not is_engine_runtime_installed("pocket-tts"):
+            QMessageBox.warning(
+                self,
+                "Runtime Pocket TTS manquant",
+                "Le moteur Pocket TTS n'est pas présent dans cette installation. "
+                "Réinstallez l'application avec l'extra Pocket TTS (ou exécutez "
+                "setup_env.bat en développement), puis réessayez.",
+            )
+            return
+        language = self._pocket_install_language()
+        self.statusBar().showMessage(
+            f"Installation de Pocket TTS ({language}) — téléchargement des poids…",
+            15000,
+        )
+        if not hasattr(self, "_pocket_install_threads"):
+            self._pocket_install_threads = []
+        thread = PocketInstallThread(
+            self._voice_service, language, self._voice_settings(), self
+        )
+        thread.finished_signal.connect(self._pocket_install_finished)
+        thread.start()
+        self._pocket_install_threads.append(thread)
+
+    def _pocket_install_language(self) -> str:
+        """Preload the bundle for the language the user actually generates in."""
+
+        if hasattr(self, "default_language"):
+            token = str(self.default_language.currentData() or "")
+            if token:
+                return token
+        return str(self.library.preference(DEFAULT_LANGUAGE_PREFERENCE, "French"))
+
+    def _pocket_install_finished(self, success: bool, message: str) -> None:
+        if success:
+            self.statusBar().showMessage(message, 6000)
+        else:
+            QMessageBox.warning(
+                self, "Installation de Pocket TTS impossible", message
+            )
         self._refresh_voice_model_settings()
 
     def _delete_voice_model(self, profile: ModelProfile) -> None:
@@ -2604,17 +2737,11 @@ class MainWindow(QMainWindow):
             spans.append(EmotionSpan(start, len(text), active))
         return spans
 
-    def _f5_generation_text(self, test_mode: bool = False) -> str:
-        """Convert editor colours into F5 markers only for an F5 generation."""
+    def _f5_generation_text(self) -> str:
+        """Convert editor colours into F5 markers for an F5 generation."""
 
         plain = self.voice_text.toPlainText()
-        limit = min(len(plain), 120) if test_mode else len(plain)
-        clipped = [
-            EmotionSpan(span.start, min(span.end, limit), span.emotion)
-            for span in self._f5_emotion_spans(plain)
-            if span.start < limit
-        ]
-        return render_emotion_tags(plain[:limit], clipped)
+        return render_emotion_tags(plain, self._f5_emotion_spans(plain))
 
     def _voice_language(self) -> str:
         """Return the canonical engine token, not the translated label."""
@@ -3163,20 +3290,9 @@ class MainWindow(QMainWindow):
     def _generate_voice(self) -> None:
         """Generate the full text with the current voice."""
 
-        self._start_voice_generation(False)
+        self._start_voice_generation()
 
-    def _test_voice(self) -> None:
-        """Generate a short phrase and play it, before committing to a full run."""
-
-        self._start_voice_generation(True)
-
-    def _test_phrase(self) -> str:
-        """Use the beginning of the user's own text when there is one."""
-
-        typed = " ".join(self.voice_text.toPlainText().split())
-        return typed[:120] if typed else self._VOICE_TEST_SENTENCE
-
-    def _start_voice_generation(self, test_mode: bool) -> None:
+    def _start_voice_generation(self) -> None:
         sample = Path(self.voice_sample.text().strip())
         ref_text = self.voice_reference_text.text().strip()
         if not sample.is_file():
@@ -3187,7 +3303,7 @@ class MainWindow(QMainWindow):
                 "capturez la sortie audio ou importez un fichier.",
             )
             return
-        text = self._test_phrase() if test_mode else self.voice_text.toPlainText().strip()
+        text = self.voice_text.toPlainText().strip()
         if not text:
             QMessageBox.warning(
                 self,
@@ -3199,12 +3315,7 @@ class MainWindow(QMainWindow):
         if self._voice_thread is not None:
             return
         stamp = f"{datetime.now(UTC):%Y%m%d-%H%M%S}"
-        output = (
-            self.paths.audio_cache / "voice-tests" / f"test-{stamp}.wav"
-            if test_mode
-            else self.paths.audio_cache / "generated-voices" / f"voice-{stamp}.wav"
-        )
-        self._voice_test_mode = test_mode
+        output = self.paths.audio_cache / "generated-voices" / f"voice-{stamp}.wav"
         requested_engine = str(self.voice_engine.currentData() or "pocket-tts")
         if not is_engine_runtime_installed(requested_engine):
             # Never fall back to an engine whose runtime is missing too: that is
@@ -3246,7 +3357,7 @@ class MainWindow(QMainWindow):
 
         self._voice_thread = QThread(self)
         if requested_engine == "f5-tts":
-            text = self._f5_generation_text(test_mode)
+            text = self._f5_generation_text()
         self._active_voice_engine = requested_engine
         settings = self._voice_settings()
         self._voice_worker = VoiceWorker(
@@ -3274,10 +3385,8 @@ class MainWindow(QMainWindow):
         self._voice_thread.finished.connect(self._voice_thread.deleteLater)
         self._voice_thread.finished.connect(self._voice_thread_done)
         self.voice_generate_button.setEnabled(False)
-        self.voice_test_button.setEnabled(False)
         self.voice_advanced_button.setEnabled(False)
-        active_button = self.voice_test_button if test_mode else self.voice_generate_button
-        active_button.setText("Génération en cours…")
+        self.voice_generate_button.setText("Génération en cours…")
         self._voice_generation_ok = False
         self._voice_ui_generation += 1
         self.voice_progress.setRange(0, 0)
@@ -3336,12 +3445,6 @@ class MainWindow(QMainWindow):
         duration_seconds: float = 0.0,
     ) -> None:
         path = Path(output)
-        if self._voice_test_mode:
-            # A test is a throwaway check of the voice, not a library entry.
-            self._set_last_generation(path, "Test de la voix")
-            self._voice_generation_ok = True
-            self.voice_result_player.play()
-            return
         generation = self.library.add_voice_generation(
             path.stem,
             text,
@@ -3373,18 +3476,13 @@ class MainWindow(QMainWindow):
         self._voice_thread = None
         self._voice_worker = None
         self.voice_generate_button.setEnabled(True)
-        self.voice_test_button.setEnabled(True)
         self.voice_advanced_button.setEnabled(True)
         self.voice_generate_button.setText("Générer")
-        self.voice_test_button.setText("Tester la voix")
         if self._voice_generation_ok:
             self.voice_progress.setRange(0, 100)
             self.voice_progress.setValue(100)
             self.voice_status.setText(
-                "Test terminé — écoutez le rendu ci-dessous. Si la voix vous convient, "
-                "lancez « Générer »."
-                if self._voice_test_mode
-                else "Génération terminée — cliquez sur ▶ dans « Résultat » pour l’écouter."
+                "Génération terminée — cliquez sur ▶ dans « Résultat » pour l’écouter."
             )
         if self._voice_generation_ok:
             QTimer.singleShot(

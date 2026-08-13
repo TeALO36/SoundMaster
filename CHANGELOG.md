@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.0 — 2026-08-13
+
+### Added
+
+- **Installation et réinstallation de Pocket TTS depuis l’application** : la carte du moteur par défaut dans Paramètres → Modèles vocaux affiche désormais un bouton « Installer Pocket TTS » (ou « Réinstaller les poids » quand les poids sont déjà en cache) — toujours disponible, même quand Pocket TTS est le moteur actif par défaut. Le clic lance un vrai téléchargement des poids (~300 Mo) via le chargeur du moteur, puis vérifie dans le cache Hugging Face que les poids de clonage vocal (dépôt gated Kyutai) sont réellement présents : si l’accès au modèle n’a pas été accepté, un message clair explique les étapes (accepter les conditions, créer un jeton, `huggingface-cli login`). La carte montre aussi un statut honnête (« Runtime : intégré · Poids vocaux : installés / à télécharger ») au lieu d’afficher toujours « Non installé ». Choisir Pocket TTS par défaut sans poids téléchargés propose maintenant l’installation immédiatement.
+
+### Changed
+
+- **Le bouton « Tester la voix » est supprimé** : tester la voix revenait à lancer une génération courte — l’utilisateur peut simplement écrire une phrase et cliquer « Générer », puis réécouter et recommencer si besoin. Une génération de moins pour le même résultat.
+
+### Validation
+
+- 133 tests automatisés passent (4 nouveaux : la carte Pocket TTS propose toujours installer/réinstaller, un runtime manquant produit un message clair, l’installation lance bien un téléchargement en arrière-plan, et `preload_pocket_tts` charge puis libère le moteur).
+
 ## 0.8.9 — 2026-08-13
 
 ### Added

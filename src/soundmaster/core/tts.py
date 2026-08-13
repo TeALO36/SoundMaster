@@ -83,6 +83,49 @@ def pocket_has_quality_variant(language: str) -> bool:
     variants = POCKET_LANGUAGE_BUNDLES.get((language or "").strip())
     return bool(variants) and variants[0] != variants[1]
 
+
+# Scanning the Hugging Face cache costs a few hundred milliseconds, and the
+# result only changes when the user installs or deletes weights. Cache it so
+# rebuilding the settings cards (once per window construction) stays cheap.
+_pocket_weights_cache: tuple[float, bool] | None = None
+_POCKET_WEIGHTS_CACHE_TTL = 15.0
+
+
+def pocket_weights_cached() -> bool:
+    """Whether the voice-cloning weights of ``kyutai/pocket-tts`` are cached.
+
+    Pocket TTS resolves its own weights through ``hf_hub_download`` on first
+    load. Without accepted terms and a logged-in token the runtime silently
+    falls back to the ungated build that cannot clone voices, so the presence
+    of the gated repository's weights in the Hugging Face cache is the only
+    honest "installed" signal. A probe failure is reported as not-installed
+    rather than crashing the settings page.
+    """
+
+    global _pocket_weights_cache
+    import time as _time
+
+    now = _time.monotonic()
+    if _pocket_weights_cache is not None:
+        stamp, cached = _pocket_weights_cache
+        if now - stamp < _POCKET_WEIGHTS_CACHE_TTL:
+            return cached
+    try:
+        from huggingface_hub import scan_cache_dir
+
+        found = any(
+            repo.repo_id == "kyutai/pocket-tts"
+            and any(
+                file.file_name == "model.safetensors" for file in revision.files
+            )
+            for repo in scan_cache_dir().repos
+            for revision in repo.revisions
+        )
+    except Exception:  # noqa: BLE001 - a cache probe must never break the UI.
+        found = False
+    _pocket_weights_cache = (now, found)
+    return found
+
 # Windows ERROR_COMMITMENT_LIMIT. Loading multi-gigabyte weights commits far more
 # virtual memory than the default paging file allows on many gaming machines.
 _WINDOWS_COMMITMENT_LIMIT = 1455
@@ -121,8 +164,9 @@ POCKET_GATED_HINT = (
     "conditions du modèle (compte Hugging Face gratuit).\n"
     "2. Créez un jeton d’accès en lecture sur "
     "https://huggingface.co/settings/tokens\n"
-    "3. Dans l’invite de commandes, connectez-vous une seule fois :\n"
-    "   .venv\\Scripts\\python -m huggingface_hub.commands.huggingface_cli login\n\n"
+    "3. Connectez-vous une seule fois avec la commande `huggingface-cli login` "
+    "(ou `python -m huggingface_hub.commands.huggingface_cli login`) dans un "
+    "terminal où Python est installé, puis relancez l’application.\n\n"
     "Sans cet accès, Pocket TTS ne peut pas imiter votre échantillon. "
     "Vous pouvez en attendant utiliser le moteur Qwen3-TTS dans les réglages avancés."
 )
@@ -626,6 +670,30 @@ class QwenVoiceService:
                 "La version installée de F5-TTS a renvoyé un résultat inattendu."
             ) from error
         return audio, int(sample_rate)
+
+    def preload_pocket_tts(
+        self, language: str, settings: dict[str, object] | None = None
+    ) -> None:
+        """Download and cache the Pocket TTS weights for ``language``.
+
+        Loading the model triggers the runtime's own weight download (the
+        voice-cloning bundle when the Kyutai terms were accepted, otherwise the
+        ungated fallback). The model is released immediately afterwards, so the
+        "install" costs disk space but not resident RAM. Raises
+        :class:`VoiceGenerationError` when the runtime or the download fails.
+        """
+
+        if not is_engine_runtime_installed("pocket-tts"):
+            raise VoiceGenerationError(
+                "Le runtime pocket-tts manque. Installez l’extra : "
+                "python -m pip install 'soundmaster[pocket]'."
+            )
+        load_options = self._pocket_load_options(language, settings)
+        load_options = self._apply_pocket_mirror(load_options, settings)
+        try:
+            self._load_engine(Path(""), "pocket-tts", load_options)
+        finally:
+            self._release_engine()
 
     def _load_pocket_engine(self, load_options: dict[str, object]) -> Any:
         """Load Pocket TTS with the requested language bundle and options.
