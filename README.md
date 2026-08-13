@@ -17,6 +17,7 @@ SoundMaster est une application Windows locale destinée aux joueurs : soundboar
 - clonage de voix en trois étapes avec écoute intégrée de l’échantillon et du résultat ;
 - moteur **Pocket TTS** (Kyutai) par défaut : génération rapide sur processeur, sans GPU et sans transcription, en 6 langues ;
 - lecture quasi instantanée des sons grâce au préchargement au survol et aux lecteurs dédiés aux raccourcis ;
+- import d’un fichier **audio ou vidéo** dans la soundboard : les vidéos (MP4, MKV, MOV, WebM…) sont converties en audio automatiquement, sans aucune manipulation ;
 - vérification et installation des mises à jour depuis les paramètres ;
 - génération vocale locale Qwen3-TTS ou OmniVoice avec transcription automatique facultative ;
 - enregistrement direct d’un échantillon microphone depuis l’écran de clonage ;
@@ -39,9 +40,11 @@ Une fois déverrouillé, l’écran suit trois étapes :
    puis nommez-la. L’enregistrement de la voix est facultatif pour générer : il sert à
    la réutiliser plus tard.
 2. **Donnez-lui une voix à imiter** — enregistrez 3 à 10 secondes au micro, capturez la
-   sortie Windows, ou importez un fichier. L’échantillon se charge dans le lecteur
-   intégré : cliquez sur ▶ pour le réécouter autant de fois que nécessaire. Rien
-   n’est joué sans que vous le demandiez.
+   sortie Windows, ou importez un fichier **audio ou vidéo** (MP4, MKV, MOV, WebM…).
+   Une vidéo est convertie en audio **automatiquement** par l’application : vous n’avez
+   rien à faire, l’échantillon devient un .wav prêt à l’emploi. L’échantillon se charge
+   dans le lecteur intégré : cliquez sur ▶ pour le réécouter autant de fois que
+   nécessaire. Rien n’est joué sans que vous le demandiez.
 3. **Écrivez et générez** — saisissez le texte à l’étape 3 puis cliquez sur **Générer**.
    Le résultat s’écoute dans la carte Résultat et peut être réessayé autant de fois
    que nécessaire avant d’être ajouté aux favoris.

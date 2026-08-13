@@ -64,6 +64,21 @@ jobs:
           # v0.8.7 shipped without it, which made the packaged app fall back to
           # OmniVoice and demand a model the user never chose.
           python -m pip install ".[dev,build,pocket]" "numpy>=1.26,<3"
+          # Qwen3-TTS (the recommended engine) must be bundled too: without it
+          # every engine except Pocket TTS answers "runtime manque" in the
+          # packaged app. qwen-tts is installed with --no-deps so its gradio/sox
+          # demo dependencies are skipped; transformers keeps torch optional
+          # (its "torch" extra), so torch is installed last as the CPU wheel.
+          # The CUDA wheels are ~3.8 GB and would push the release past GitHub's
+          # 2 GB per-asset limit; every engine runs on CPU, and users who want
+          # GPU acceleration install a CUDA/ROCm wheel via setup_gpu.bat or
+          # setup_amd.bat (the app then auto-detects it).
+          python -m pip install --no-deps "qwen-tts==0.1.1"
+          # Install the CPU torch BEFORE transformers/accelerate: accelerate
+          # hard-requires torch, so installing it first would otherwise pull the
+          # 3.9 GB CUDA wheel from PyPI before the CPU-only reinstall.
+          python -m pip install --force-reinstall --no-deps "torch>=2.6,<3" "torchaudio>=2.6,<3" --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install "transformers==4.57.3" "accelerate==1.12.0" "einops>=0.7,<1" "librosa>=0.10,<1" "onnxruntime>=1.17,<2" "faster-whisper>=1.1,<2"
 
       - name: Run tests before packaging
         shell: pwsh

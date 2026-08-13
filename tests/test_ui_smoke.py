@@ -292,6 +292,110 @@ def test_recorded_sample_is_immediately_playable(qapp: QApplication, tmp_path: P
     window.close()
 
 
+def test_importing_a_video_sample_converts_it_to_wav(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A video imported as a voice sample is decoded to WAV automatically.
+
+    The user must never convert anything: picking a video in the dialog results
+    in a ready-to-use .wav sample inside the managed sample bank.
+    """
+
+    pytest.importorskip("av")
+    import av
+    import numpy as np
+
+    window = _unlocked_window(tmp_path)
+    video = tmp_path / "capture.mp4"
+    sample_rate = 48_000
+    t = np.linspace(0.0, 0.5, int(sample_rate * 0.5), endpoint=False)
+    tone = (0.4 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+    container = av.open(str(video), mode="w")
+    stream = container.add_stream("aac", rate=sample_rate)
+    stream.layout = "mono"
+    frame = av.AudioFrame.from_ndarray(tone.reshape(1, -1), format="fltp", layout="mono")
+    frame.sample_rate = sample_rate
+    for packet in stream.encode(frame):
+        container.mux(packet)
+    for packet in stream.encode(None):
+        container.mux(packet)
+    container.close()
+
+    monkeypatch.setattr(
+        "soundmaster.ui.main_window.QFileDialog.getOpenFileName",
+        lambda *_args, **_kwargs: (str(video), ""),
+    )
+
+    window._import_voice_sample()
+
+    assert window.voice_sample.text().endswith(".wav")
+    loaded = Path(window.voice_sample.text())
+    assert loaded.is_file()
+    assert loaded.parent == window.paths.voice_samples
+    import soundfile as sf
+
+    info = sf.info(str(loaded))
+    assert info.samplerate == 24_000
+    assert info.channels == 1
+    assert "convertie" in window.voice_profile_status.text().lower()
+
+    window._allow_close = True
+    window.close()
+
+
+def test_adding_a_video_to_favorites_converts_it_to_wav(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A video picked in the soundboard picker becomes a playable WAV favorite.
+
+    The zero-latency engine reads audio files directly, so the video must be
+    decoded at import time — the user never converts anything by hand.
+    """
+
+    pytest.importorskip("av")
+    import av
+    import numpy as np
+
+    window = _unlocked_window(tmp_path)
+    video = tmp_path / "clip.mp4"
+    sample_rate = 48_000
+    t = np.linspace(0.0, 0.4, int(sample_rate * 0.4), endpoint=False)
+    tone = (0.3 * np.sin(2 * np.pi * 250 * t)).astype(np.float32)
+    container = av.open(str(video), mode="w")
+    stream = container.add_stream("aac", rate=sample_rate)
+    stream.layout = "mono"
+    frame = av.AudioFrame.from_ndarray(tone.reshape(1, -1), format="fltp", layout="mono")
+    frame.sample_rate = sample_rate
+    for packet in stream.encode(frame):
+        container.mux(packet)
+    for packet in stream.encode(None):
+        container.mux(packet)
+    container.close()
+
+    monkeypatch.setattr(
+        "soundmaster.ui.main_window.QFileDialog.getOpenFileName",
+        lambda *_args, **_kwargs: (str(video), ""),
+    )
+
+    window._add_local_file()
+
+    favorites = window.library.sounds(favorites_only=True)
+    assert len(favorites) == 1
+    loaded = Path(favorites[0].path)
+    assert loaded.suffix == ".wav"
+    assert loaded.parent == window.paths.audio_cache / "imported-videos"
+    assert loaded.is_file()
+    import soundfile as sf
+
+    info = sf.info(str(loaded))
+    assert info.samplerate == 24_000
+    assert info.channels == 1
+    assert favorites[0].title == "clip"
+
+    window._allow_close = True
+    window.close()
+
+
 def test_generated_result_is_playable_and_added_to_history(
     qapp: QApplication, tmp_path: Path
 ) -> None:

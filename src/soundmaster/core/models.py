@@ -8,6 +8,7 @@ be reviewed before commercial redistribution or product bundling.
 from __future__ import annotations
 
 import argparse
+import errno
 import os
 import sys
 from collections.abc import Callable, Iterable
@@ -17,6 +18,11 @@ from pathlib import Path
 from soundmaster.core.config import AppPaths, load_config
 
 MODEL_DIR_ENV = "SOUNDMASTER_MODEL_DIR"
+
+# Pocket TTS downloads its weights through ``hf_hub_download`` into the
+# Hugging Face hub cache. The app redirects that cache under the user-chosen
+# model directory (e.g. D:) so a full system disk cannot break installs.
+HF_CACHE_SUBDIR = "hf-cache"
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +94,57 @@ MODEL_PROFILES: tuple[ModelProfile, ...] = (
 _model_directory_override: Path | None = None
 
 
+def _default_hf_hub_cache() -> Path:
+    """Recompute huggingface_hub's default hub cache from the environment."""
+
+    hf_home = os.path.expandvars(
+        os.path.expanduser(
+            os.getenv(
+                "HF_HOME",
+                os.path.join(
+                    os.getenv("XDG_CACHE_HOME", str(Path.home() / ".cache")),
+                    "huggingface",
+                ),
+            )
+        )
+    )
+    legacy = os.getenv("HUGGINGFACE_HUB_CACHE", os.path.join(hf_home, "hub"))
+    hub_cache = os.path.expandvars(os.path.expanduser(os.getenv("HF_HUB_CACHE", legacy)))
+    return Path(hub_cache)
+
+# The hub-cache location chosen at application startup. Resetting the model
+# folder mid-session must restore this (the environment alone is not reliable:
+# it was mutated by the very change being undone).
+_startup_hf_hub_cache: Path | None = None
+
+
+def record_hf_cache_default(target: Path | None) -> None:
+    """Remember the hub-cache location chosen at application startup."""
+
+    global _startup_hf_hub_cache
+    _startup_hf_hub_cache = Path(target) if target is not None else None
+
+
+def _apply_hf_hub_cache_location(target: Path) -> None:
+    """Redirect the huggingface_hub hub cache to ``target`` immediately.
+
+    huggingface_hub snapshots the cache path into module constants at import
+    time, but ``hf_hub_download`` and ``scan_cache_dir`` read the constants
+    live, so patching them makes a folder change effective at once instead of
+    only at the next launch. Only the *hub cache* is redirected — ``HF_HOME``
+    (which also locates the login token of the gated Pocket TTS repository) is
+    deliberately left alone so existing authentication keeps working.
+    """
+
+    os.environ["HF_HUB_CACHE"] = str(target)
+    try:
+        import huggingface_hub.constants as hf_constants
+    except ImportError:
+        return
+    hf_constants.HF_HUB_CACHE = str(target)
+    hf_constants.default_cache_path = str(target)
+
+
 def set_model_directory(directory: Path | None) -> None:
     """Redirect all model storage to ``directory`` (or back to the default)."""
 
@@ -95,10 +152,32 @@ def set_model_directory(directory: Path | None) -> None:
     _model_directory_override = (
         Path(directory).expanduser().resolve() if directory is not None else None
     )
+    target = (
+        _model_directory_override / HF_CACHE_SUBDIR
+        if _model_directory_override is not None
+        else (_startup_hf_hub_cache or _default_hf_hub_cache())
+    )
+    _apply_hf_hub_cache_location(target)
 
 
 class ModelDownloadError(RuntimeError):
     """Raised when a public model cannot be downloaded."""
+
+
+def _download_error_message(repository: str, error: BaseException) -> str:
+    """Build an honest download error, with a clear hint on a full disk."""
+
+    message = f"Téléchargement impossible pour {repository}: {error}"
+    full = isinstance(error, OSError) and error.errno == errno.ENOSPC
+    text = str(error).lower()
+    full = full or "no space left on device" in text or "there is not enough space" in text
+    if full:
+        message += (
+            " — Espace disque insuffisant. Libérez de l’espace ou changez le "
+            "dossier des modèles dans Paramètres → Modèles vocaux vers un disque "
+            "avec de l’espace libre (par exemple D:)."
+        )
+    return message
 
 
 def model_directory(paths: AppPaths) -> Path:
@@ -206,9 +285,7 @@ def download_model(
             if sibling.rfilename != ".gitattributes"
         ]
     except Exception as error:
-        raise ModelDownloadError(
-            f"Téléchargement impossible pour {profile.repository}: {error}"
-        ) from error
+        raise ModelDownloadError(_download_error_message(profile.repository, error)) from error
 
     total = sum(size for _name, size in files)
     downloaded = 0
@@ -224,9 +301,7 @@ def download_model(
             if progress is not None:
                 progress(downloaded, total, rfilename)
     except Exception as error:
-        raise ModelDownloadError(
-            f"Téléchargement impossible pour {profile.repository}: {error}"
-        ) from error
+        raise ModelDownloadError(_download_error_message(profile.repository, error)) from error
     return destination
 
 

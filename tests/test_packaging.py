@@ -37,6 +37,23 @@ def test_spec_bundles_the_default_voice_engine() -> None:
     assert "*pocket_hiddenimports" in spec
 
 
+def test_spec_bundles_the_recommended_qwen_engine_and_its_transcriber() -> None:
+    """The packaged app must embed the Qwen3-TTS runtime and faster-whisper.
+
+    Without them every engine except Pocket TTS answers "runtime manque" in the
+    packaged app, exactly like the user-reported "Le runtime qwen-tts manque"
+    (qwen-tts/omnivoice/f5-tts were never installed at build time because the
+    `tts` extra was unresolvable).
+    """
+
+    spec = Path("packaging/SoundMaster.spec").read_text(encoding="utf-8")
+    assert 'collect_all("qwen_tts")' in spec
+    assert 'collect_all("faster_whisper")' in spec
+    assert "*qwen_datas" in spec
+    assert "*whisper_hiddenimports" in spec
+    assert '"torch"' in spec
+
+
 def test_portable_mode_uses_executable_directory(monkeypatch, tmp_path: Path) -> None:
     executable_dir = tmp_path / "SoundMaster"
     executable_dir.mkdir()

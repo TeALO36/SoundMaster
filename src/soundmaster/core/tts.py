@@ -8,6 +8,7 @@ lazy-loaded and are never imported at application startup.
 
 from __future__ import annotations
 
+import errno
 import gc
 import inspect
 from pathlib import Path
@@ -21,30 +22,34 @@ from soundmaster.core.pocket_mirror import configured_mirror, mirror_config
 SUPPORTED_ENGINE_KEYS = ("pocket-tts", "qwen3-tts", "qwen3-tts-0.6b", "omnivoice", "f5-tts")
 
 
+def _module_available(module_name: str) -> bool:
+    """Check an optional module without importing it (find_spec is fast)."""
+
+    try:
+        from importlib.util import find_spec
+
+        return find_spec(module_name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def is_engine_runtime_installed(engine_key: str) -> bool:
-    """Check if the python runtime dependencies for the engine are installed."""
+    """Check if the python runtime dependencies for the engine are installed.
+
+    Each engine is probed by its own package rather than by a shared
+    dependency: checking ``import torch`` for omnivoice would report it
+    installed as soon as any engine ships torch, even though ``omnivoice``
+    itself is absent from the build.
+    """
 
     if engine_key == "pocket-tts":
-        try:
-            import pocket_tts  # noqa: F401
-
-            return True
-        except ImportError:
-            return False
+        return _module_available("pocket_tts")
     if engine_key == "f5-tts":
-        try:
-            import f5_tts  # noqa: F401
-
-            return True
-        except ImportError:
-            return False
-    if engine_key in ("qwen3-tts", "qwen3-tts-0.6b", "omnivoice"):
-        try:
-            import torch  # noqa: F401
-
-            return True
-        except ImportError:
-            return False
+        return _module_available("f5_tts")
+    if engine_key in ("qwen3-tts", "qwen3-tts-0.6b"):
+        return _module_available("qwen_tts")
+    if engine_key == "omnivoice":
+        return _module_available("omnivoice")
     return False
 
 # Pocket TTS ships one bundle per language inside the same repository and picks
@@ -82,6 +87,27 @@ def pocket_has_quality_variant(language: str) -> bool:
 
     variants = POCKET_LANGUAGE_BUNDLES.get((language or "").strip())
     return bool(variants) and variants[0] != variants[1]
+
+
+# The canonical names stored by the UI map to the ISO codes Qwen3-TTS accepts.
+# ``Auto`` becomes ``auto``; anything unknown is lower-cased so a raw code
+# already in the right form keeps working.
+_QWEN_LANGUAGE_ALIASES: dict[str, str] = {
+    "French": "french",
+    "English": "english",
+    "German": "german",
+    "Italian": "italian",
+    "Portuguese": "portuguese",
+    "Spanish": "spanish",
+    "Auto": "auto",
+}
+
+
+def _qwen_language_code(language: str) -> str:
+    """Normalise a UI language token to the code Qwen3-TTS accepts."""
+
+    token = (language or "Auto").strip()
+    return _QWEN_LANGUAGE_ALIASES.get(token, token.lower())
 
 
 # Scanning the Hugging Face cache costs a few hundred milliseconds, and the
@@ -148,6 +174,18 @@ OUT_OF_MEMORY_HINT = (
     "• redémarrez Windows pour libérer la mémoire déjà réservée."
 )
 
+# Pocket TTS downloads its weights through ``hf_hub_download`` into the
+# Hugging Face cache, which defaults to the system disk (C:). When that disk is
+# full, the write fails with an OSError whose path happens to contain the
+# language name (…/languages/french_24l/model.safetensors) — the old diagnostic
+# then wrongly blamed the language. Report the real cause instead.
+POCKET_DISK_FULL_HINT = (
+    "Espace disque insuffisant pour télécharger les poids de Pocket TTS.\n\n"
+    "• Libérez de l’espace sur le disque système, ou\n"
+    "• changez le dossier des modèles dans Paramètres → Modèles vocaux vers un "
+    "disque avec de l’espace libre (par exemple D:), puis relancez l’installation."
+)
+
 
 # Pocket TTS keeps its voice-cloning weights in a gated Hugging Face repository.
 # Without accepted terms and a local login it silently falls back to a build that
@@ -212,6 +250,29 @@ def _is_out_of_memory(error: BaseException) -> bool:
             return True
         text = str(current).lower()
         if any(marker in text for marker in _MEMORY_ERROR_MARKERS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+_DISK_FULL_MARKERS = (
+    "no space left on device",
+    "disk full",
+    "there is not enough space",
+)
+
+
+def _is_disk_full(error: BaseException) -> bool:
+    """Detect a full-disk failure, possibly wrapped by the download layer."""
+
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, OSError) and current.errno == errno.ENOSPC:
+            return True
+        text = str(current).lower()
+        if any(marker in text for marker in _DISK_FULL_MARKERS):
             return True
         current = current.__cause__ or current.__context__
     return False
@@ -463,10 +524,14 @@ class QwenVoiceService:
     ) -> tuple[Any, int]:
         import torch
 
+        # The engine accepts ISO codes ("french", "auto") while the UI stores
+        # canonical names ("French") — Qwen rejects the capitalised form with
+        # "Unsupported languages". Normalise before calling.
+        qwen_language = _qwen_language_code(language)
         with torch.inference_mode():
             kwargs: dict[str, object] = {
                 "text": text,
-                "language": language or "Auto",
+                "language": qwen_language,
                 "ref_audio": str(ref_audio),
                 "ref_text": ref_text,
             }
@@ -719,10 +784,12 @@ class QwenVoiceService:
         except VoiceGenerationError:
             raise
         except Exception as error:
+            if _is_disk_full(error):
+                raise VoiceGenerationError(POCKET_DISK_FULL_HINT) from error
             if _is_out_of_memory(error):
                 raise VoiceGenerationError(OUT_OF_MEMORY_HINT) from error
             language = kwargs.get("language")
-            if language and self._mentions_language(error, str(language)):
+            if language and self._mentions_language(error):
                 raise VoiceGenerationError(
                     f"La langue « {language} » n’est pas disponible pour Pocket TTS "
                     "dans cette version. Choisissez une autre langue dans les "
@@ -757,9 +824,26 @@ class QwenVoiceService:
             return model
 
     @staticmethod
-    def _mentions_language(error: BaseException, language: str) -> bool:
+    def _mentions_language(error: BaseException) -> bool:
+        """Return True only when the runtime explicitly rejects the language.
+
+        The bundle is selected through ``load_model(language=...)``, and the
+        only genuine language errors the runtime raises are a ``ValueError``
+        explaining that no bundle exists for the requested language and a
+        ``FileNotFoundError`` when the matching ``<language>.yaml`` config file
+        is missing from the installation. Anything else (network, full disk,
+        corrupted weights, …) must NOT be reported as a language problem — its
+        message often happens to contain the language name inside a file path.
+        """
+
         text = str(error).lower()
-        return language.lower() in text or "language" in text
+        return (
+            ("only a larger" in text and "model is available" in text)
+            or (
+                isinstance(error, FileNotFoundError)
+                and (".yaml" in text or ".yml" in text)
+            )
+        )
 
     def _release_engine(self) -> None:
         self._pocket_states.clear()

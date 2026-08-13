@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.2 — 2026-08-13
+
+### Fixed
+
+- **« La langue french_24l n’est pas disponible pour Pocket TTS dans cette version »** : le message était un **faux diagnostic**. Quand le disque système (C:) est plein, le téléchargement des poids Pocket TTS échoue avec une `OSError` dont le *chemin* contient `french_24l` (…/languages/french_24l/model.safetensors) — l’ancien détecteur matchait ce nom dans le chemin et accusait la langue à tort. La détection est maintenant stricte (seules les vraies erreurs de langue du runtime déclenchent ce message), et un **disque plein est signalé comme tel** avec une aide concrète (libérer de l’espace ou changer le dossier des modèles vers un disque libre, ex. D:).
+- **Les téléchargements Pocket TTS tombent maintenant sur le disque choisi** : le cache Hugging Face (`HF_HUB_CACHE`) est redirigé sous le dossier des modèles (ex. `D:\SoundMaster-models\hf-cache`) avant tout import de `huggingface_hub`, au démarrage et à chaque changement de dossier en cours de session. `HF_HOME` (emplacement du jeton de connexion du dépôt gated Kyutai) est volontairement inchangé pour ne pas casser le clonage vocal.
+- **Sélection automatique d’un autre disque** : sans choix explicite de l’utilisateur, si le disque par défaut des modèles a moins de 8 Go libres, l’application choisit automatiquement le plus grand autre disque local (ex. `D:\SoundMaster-models`), le mémorise et y redirige les téléchargements — une installation sur une machine au C: saturé fonctionne sans intervention.
+- L’erreur de téléchargement des autres modèles (Qwen3-TTS, OmniVoice, F5-TTS) signale aussi clairement un disque plein quand c’est la cause.
+- **« Le runtime qwen-tts manque » dans l’application installée** : les moteurs Qwen3-TTS / OmniVoice / F5-TTS n’ont jamais été embarqués dans le binaire (l’extra `tts` était inrésolvable — conflit `transformers==4.57.3` de qwen-tts contre `>=5.3.0` d’omnivoice — donc le build installait seulement Pocket TTS). L’extra `tts` est réparé (stack Qwen3-TTS uniquement, chaque moteur garde son propre environnement), le workflow de release installe désormais `qwen-tts` + `transformers` + `faster-whisper` + **torch CPU** (les wheels CUDA feraient dépasser la limite GitHub de 2 Go par asset), et le spec PyInstaller collecte `qwen_tts`, `faster_whisper` et `torch`/`torchaudio`.
+- **Les contrôles de runtime sont fiables** : chaque moteur est maintenant sondé par son propre paquet (`qwen_tts`, `pocket_tts`, …) via `find_spec` au lieu de tester `import torch` — omnivoice ne passe plus pour installé juste parce que torch est présent.
+
+- **Génération Qwen3-TTS avec une langue sélectionnée** : le moteur rejette le token capitalisé de l’UI (`French`) avec `Unsupported languages` — il n’accepte que les codes ISO (`french`, `auto`). La langue est normalisée avant l’appel (`French → french`, `Auto → auto`, …), découvert et vérifié par un clonage réel de bout en bout avec les échantillons Screenrecorder.
+- **Auto-sélection du disque des modèles** : un lecteur réseau mappé (NAS Freebox, Google Drive — `DriveType 4`) était choisi à la place du disque local NVMe parce qu’il annonce énormément d’espace libre, envoyant les téléchargements multi-Go sur le réseau. Seuls les disques locaux fixes (`DriveType 3`) sont désormais éligibles.
+
+### Added
+
+- **Import d’un échantillon vocal audio OU vidéo** : le dialogue d’import accepte les vidéos (MP4, MKV, MOV, AVI, WebM, WMV, FLV, MPG, TS, 3GP, …) en plus des formats audio. Une vidéo est convertie en WAV 24 kHz mono **automatiquement** (décodage via PyAV/FFmpeg) — l’utilisateur n’a jamais à convertir quoi que ce soit : il choisit son fichier et l’échantillon est prêt à l’emploi, dans le même lecteur et le même flux de clonage.
+- **Soundboard : import d’une vidéo dans les favoris** — le bouton « + Ajouter un fichier » accepte aussi les vidéos : elles sont converties en WAV automatiquement dans le cache (le moteur zéro-latence lit des fichiers audio), puis jouables comme n’importe quel favori.
+
+### Validation
+
+- 160 tests automatisés (21 nouveaux) : le faux diagnostic disque-plein/langue est verrouillé, la détection ENOSPC marche à travers les chaînes d’exceptions, la redirection du cache suit le dossier choisi et se réinitialise correctement, le cache n’écrase jamais un `HF_HUB_CACHE` défini par l’utilisateur, la sélection automatique d’un autre disque est persistée, le spec embarque la stack Qwen, les sondes de runtime vérifient les vrais paquets, la langue Qwen est normalisée vers les codes ISO, le NAS n’est jamais sélectionné, et l’import vidéo convertit bien en WAV (module + interface).
+
 ## 0.9.1 — 2026-08-13
 
 ### Added

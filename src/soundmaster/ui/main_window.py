@@ -56,13 +56,19 @@ from PyQt6.QtWidgets import (
 
 from soundmaster.core.audio_capture import SystemAudioRecorder, wasapi_output_devices
 from soundmaster.core.config import AppConfig, AppPaths
-from soundmaster.core.fast_audio import FastAudioEngine
 from soundmaster.core.f5_emotions import (
     EMOTION_FORMAT_PROPERTY,
-    F5_EMOTIONS,
     F5_EMOTION_BY_KEY,
+    F5_EMOTIONS,
     EmotionSpan,
     render_emotion_tags,
+)
+from soundmaster.core.fast_audio import FastAudioEngine
+from soundmaster.core.media import (
+    VideoAudioExtractionError,
+    extract_audio_from_video,
+    is_video_file,
+    sample_destination,
 )
 from soundmaster.core.models import (
     MODEL_PROFILES,
@@ -809,6 +815,10 @@ class MainWindow(QMainWindow):
         self.dashboard_search.textChanged.connect(self._refresh_dashboard)
         toolbar.addWidget(self.dashboard_search, 1)
         add = QPushButton("+ Ajouter un fichier")
+        add.setToolTip(
+            "Ajouter un fichier audio ou vidéo à vos favoris — "
+            "les vidéos sont converties en audio automatiquement"
+        )
         add.clicked.connect(self._add_local_file)
         toolbar.addWidget(add)
         layout.addLayout(toolbar)
@@ -1014,7 +1024,7 @@ class MainWindow(QMainWindow):
     def _voice_step_sample(self) -> QWidget:
         card, layout = self._step_card(
             "2",
-            "Capturez ou importez l'échantillon audio",
+            "Capturez ou importez un échantillon audio ou vidéo",
             "3 à 10 secondes de parole claire suffisent. Écoutez toujours l’échantillon "
             "avant de générer : c’est lui qui décide du résultat.",
         )
@@ -1055,7 +1065,7 @@ class MainWindow(QMainWindow):
         self.voice_import_button.setIcon(get_icon("import_file"))
         self.voice_import_button.setObjectName("compactButton")
         self.voice_import_button.setToolTip(
-            "Copier un fichier audio existant dans la banque SoundMaster"
+            "Importer un fichier audio ou vidéo — les vidéos sont converties en audio automatiquement"
         )
         self.voice_import_button.clicked.connect(self._import_voice_sample)
         self._voice_record_widgets.append(self.voice_import_button)
@@ -1084,7 +1094,7 @@ class MainWindow(QMainWindow):
         # The full path stays available for advanced users; the simple flow only
         # needs the player above.
         self.voice_sample = QLineEdit()
-        self.voice_sample.setPlaceholderText("Capturez au micro, capturez la sortie ou importez un échantillon")
+        self.voice_sample.setPlaceholderText("Capturez au micro, capturez la sortie ou importez un audio / une vidéo")
         self.voice_sample.setReadOnly(True)
         return card
 
@@ -2511,9 +2521,49 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Sorties audio enregistrées", 5000)
 
     def _add_local_file(self) -> None:
-        filename, _ = QFileDialog.getOpenFileName(self, "Choisir un audio", "", "Audio (*.wav *.mp3 *.ogg *.flac)")
-        if filename:
-            self._add_sound_to_favorites(Path(filename), Path(filename).stem, "local")
+        """Add an audio OR video file to the favorites.
+
+        Videos are decoded to WAV first (via PyAV) so the zero-latency engine,
+        which reads audio files directly, can play them like any other favorite.
+        The converted file lives inside the managed audio-cache folder.
+        """
+
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choisir un audio ou une vidéo",
+            "",
+            "Audio et vidéo (*.wav *.mp3 *.flac *.ogg *.m4a *.aac *.wma *.opus "
+            "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.wmv *.flv *.mpg *.mpeg "
+            "*.ts *.3gp *.ogv)",
+        )
+        if not filename:
+            return
+        source = Path(filename)
+        if is_video_file(source):
+            destination = self._managed_video_sound_destination(source)
+            try:
+                extract_audio_from_video(source, destination)
+            except VideoAudioExtractionError as error:
+                QMessageBox.warning(self, "Import impossible", str(error))
+                return
+            self._add_sound_to_favorites(destination, source.stem, "local")
+            self.statusBar().showMessage(
+                f"Vidéo « {source.stem} » convertie en audio et ajoutée aux favoris", 5000
+            )
+            return
+        self._add_sound_to_favorites(source, source.stem, "local")
+
+    def _managed_video_sound_destination(self, source: Path) -> Path:
+        """Collision-free WAV path for a converted video inside the audio cache."""
+
+        folder = self.paths.audio_cache / "imported-videos"
+        folder.mkdir(parents=True, exist_ok=True)
+        destination = folder / f"{source.stem}.wav"
+        counter = 2
+        while destination.exists():
+            destination = folder / f"{source.stem}-{counter}.wav"
+            counter += 1
+        return destination
 
     def _add_sound_to_favorites(self, path: Path, title: str, source: str) -> None:
         if self._bulk_active and source != "Myinstants":
@@ -3048,7 +3098,7 @@ class MainWindow(QMainWindow):
         self.voice_reference_text.clear()
         default_engine = self.library.preference("default_voice_engine", "pocket-tts")
         default_index = self.voice_engine.findData(default_engine)
-        self.voice_engine.setCurrentIndex(default_index if default_index >= 0 else 0)
+        self.voice_engine.setCurrentIndex(max(default_index, 0))
         # The global default language drives the new voice. A French application
         # defaults to the French bundle: leaving it on the engine default would
         # silently clone with the English model.
@@ -3082,11 +3132,15 @@ class MainWindow(QMainWindow):
         self.voice_remove_sample_button.setVisible(has_sample)
 
     def _managed_sample_destination(self, source: Path) -> Path:
-        """Return a collision-free path inside SoundMaster's managed sample folder."""
+        """Return a collision-free path inside SoundMaster's managed sample folder.
+
+        Videos are stored as ``.wav`` (they are converted on import), so a
+        video and its name never collide with an audio file of the same stem.
+        """
 
         self.paths.voice_samples.mkdir(parents=True, exist_ok=True)
-        destination = self.paths.voice_samples / source.name
-        stem, suffix = source.stem, source.suffix
+        destination = self.paths.voice_samples / sample_destination(source, self.paths.voice_samples).name
+        stem, suffix = destination.stem, destination.suffix
         counter = 2
         while destination.exists() and destination.resolve() != source.resolve():
             destination = self.paths.voice_samples / f"{stem}-{counter}{suffix}"
@@ -3094,31 +3148,54 @@ class MainWindow(QMainWindow):
         return destination
 
     def _import_voice_sample(self) -> None:
-        """Optionally copy an existing sample into SoundMaster's managed bank."""
+        """Import an audio OR video sample; videos are converted to audio.
+
+        A video (screen recording, phone capture, …) is decoded to WAV through
+        PyAV automatically, so the user never has to convert anything: the rest
+        of the app only ever sees a ready-to-use audio clip.
+        """
 
         filename, _ = QFileDialog.getOpenFileName(
             self,
-            "Importer un échantillon vocal",
+            "Importer un échantillon vocal (audio ou vidéo)",
             "",
-            "Audio (*.wav *.mp3 *.flac)",
+            "Audio et vidéo (*.wav *.mp3 *.flac *.ogg *.m4a *.aac *.wma *.opus "
+            "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.wmv *.flv *.mpg *.mpeg "
+            "*.ts *.3gp *.ogv)",
         )
         if not filename:
             return
         source = Path(filename)
         destination = self._managed_sample_destination(source)
-        if source.resolve() != destination.resolve():
+        if source.resolve() == destination.resolve():
+            self._set_voice_sample(destination)
+        elif is_video_file(source):
+            try:
+                extract_audio_from_video(source, destination)
+            except VideoAudioExtractionError as error:
+                QMessageBox.warning(
+                    self,
+                    "Import impossible",
+                    str(error),
+                )
+                return
+            self.voice_profile_status.setText(
+                "Vidéo importée et convertie en audio automatiquement. "
+                "Écoutez le résultat ci-dessus, puis testez la voix à l’étape 3."
+            )
+        else:
             shutil.copy2(source, destination)
+            self.voice_profile_status.setText(
+                "Échantillon importé. Écoutez-le ci-dessus, puis testez la voix à l’étape 3."
+            )
         self._set_voice_sample(destination)
-        self.voice_profile_status.setText(
-            "Échantillon importé. Écoutez-le ci-dessus, puis testez la voix à l’étape 3."
-        )
 
     def _remove_voice_sample(self) -> None:
         """Remove the currently loaded sample and re-show capture/import buttons."""
 
         self._set_voice_sample(None)
         self.voice_profile_status.setText(
-            "Échantillon retiré. Capturez ou importez un nouvel audio ci-dessus."
+            "Échantillon retiré. Capturez ou importez un nouvel audio ou une vidéo ci-dessus."
         )
 
     def _cleanup_managed_voice_sample(self, sample_path: Path) -> None:

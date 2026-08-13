@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soundmaster"
-version = "0.9.1"
+version = "0.9.2"
 description = "A local-first Windows soundboard for gamers."
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -32,12 +32,22 @@ build = [
 audio = [
     "sounddevice>=0.5,<1",
 ]
+# Qwen3-TTS engine stack. omnivoice and f5-tts are deliberately NOT here:
+# their pins conflict with qwen-tts (transformers==4.57.3 vs >=5.3.0) and make
+# the whole extra unresolvable — pip answers "ResolutionImpossible". Each
+# engine must therefore keep its own environment. qwen-tts also declares
+# gradio/sox for its CLI demo only; the release build installs it with
+# `--no-deps` and skips them (the inference import path does not use them).
 tts = [
     "qwen-tts",
-    "omnivoice",
-    "f5-tts",
-    "soundfile>=0.12,<1",
     "torch>=2.6,<3",
+    "torchaudio>=2.6,<3",
+    "transformers==4.57.3",
+    "accelerate==1.12.0",
+    "einops>=0.7,<1",
+    "librosa>=0.10,<1",
+    "onnxruntime>=1.17,<2",
+    "faster-whisper>=1.1,<2",
 ]
 # Pocket TTS is deliberately its own extra: it is a 100M-parameter CPU model and
 # needs neither CUDA wheels nor the local Whisper pass the other engines use.

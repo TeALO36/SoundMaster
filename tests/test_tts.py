@@ -21,6 +21,58 @@ def _paths(tmp_path: Path) -> AppPaths:
     )
 
 
+def test_engine_runtime_checks_probe_the_real_packages(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each engine is detected by its own package, never by a shared dep.
+
+    Regression: omnivoice used to be considered installed whenever torch was
+    present, even though the ``omnivoice`` package itself was not bundled — the
+    packaged app then answered "runtime manque" at generation time. The probe
+    must also stay fast (no importing of torch/pocket_tts).
+    """
+
+    from soundmaster.core.tts import is_engine_runtime_installed
+
+    def fake_find_spec(module_name: str) -> object:
+        present = {"pocket_tts", "qwen_tts", "torch"}
+        return object() if module_name in present else None
+
+    monkeypatch.setattr(
+        "soundmaster.core.tts._module_available", lambda name: fake_find_spec(name) is not None
+    )
+
+    assert is_engine_runtime_installed("pocket-tts")
+    assert is_engine_runtime_installed("qwen3-tts")
+    assert is_engine_runtime_installed("qwen3-tts-0.6b")
+    # torch alone must NOT make omnivoice or f5 appear installed.
+    assert not is_engine_runtime_installed("omnivoice")
+    assert not is_engine_runtime_installed("f5-tts")
+    assert not is_engine_runtime_installed("unknown-engine")
+
+
+def test_qwen_language_tokens_are_normalised_to_iso_codes() -> None:
+    """Qwen3-TTS rejects the UI's canonical names ("French").
+
+    Regression: the engine answers "Unsupported languages: ['Français']" (and
+    the same for "French") because it only accepts lowercase ISO codes
+    ("french", "auto", …). The UI stores the capitalised token, so the
+    generation call must normalise it.
+    """
+
+    from soundmaster.core.tts import _qwen_language_code
+
+    assert _qwen_language_code("French") == "french"
+    assert _qwen_language_code("English") == "english"
+    assert _qwen_language_code("German") == "german"
+    assert _qwen_language_code("Italian") == "italian"
+    assert _qwen_language_code("Portuguese") == "portuguese"
+    assert _qwen_language_code("Spanish") == "spanish"
+    assert _qwen_language_code("Auto") == "auto"
+    # Raw codes and unknown tokens keep working (lower-cased fallback).
+    assert _qwen_language_code("french") == "french"
+    assert _qwen_language_code("japanese") == "japanese"
+    assert _qwen_language_code("") == "auto"
+
+
 def test_f5_generation_preserves_emotion_markers() -> None:
     captured: dict[str, object] = {}
 
@@ -226,6 +278,93 @@ def test_pocket_tts_reports_a_missing_runtime(tmp_path: Path, monkeypatch) -> No
 
     with pytest.raises(VoiceGenerationError, match=r"soundmaster\[pocket\]"):
         service._load_pocket_engine(tmp_path / "missing")
+
+
+def test_pocket_disk_full_is_not_reported_as_a_language_problem(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression for the full-disk misdiagnosis.
+
+    When the system disk is full, ``hf_hub_download`` fails with an OSError
+    whose path contains the language name (…/languages/french_24l/model.safetensors).
+    The old diagnostic matched that name inside the path and claimed the
+    language was unavailable. A full disk must be reported as such.
+    """
+
+    import errno
+
+    from soundmaster.core.tts import VoiceGenerationError
+
+    service = QwenVoiceService(_paths(tmp_path))
+
+    def fake_loader(**kwargs):
+        raise OSError(
+            errno.ENOSPC,
+            "No space left on device",
+            "C:\\Users\\Teano\\.cache\\huggingface\\hub\\"
+            "models--kyutai--pocket-tts-without-voice-cloning\\snapshots\\d29db"
+            "\\languages\\french_24l\\model.safetensors",
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pocket_tts",
+        SimpleNamespace(TTSModel=SimpleNamespace(load_model=staticmethod(fake_loader))),
+    )
+    monkeypatch.setattr(
+        service, "_supported_kwargs", lambda loader, load_options: dict(load_options)
+    )
+    monkeypatch.setattr(
+        "soundmaster.core.tts.is_engine_runtime_installed", lambda _key: True
+    )
+
+    with pytest.raises(VoiceGenerationError, match=r"Espace disque insuffisant"):
+        service._load_pocket_engine({"language": "french_24l"})
+
+
+def test_pocket_mentions_language_is_strict() -> None:
+    """Only explicit runtime language errors may be reported as such."""
+
+    import errno
+
+    # A full-disk OSError whose *path* contains the language name is not a
+    # language error.
+    disk_error = OSError(
+        errno.ENOSPC,
+        "No space left on device",
+        "C:\\Users\\Teano\\.cache\\huggingface\\hub\\models--kyutai--pocket-tts"
+        "-without-voice-cloning\\snapshots\\d29db\\languages\\french_24l\\model.safetensors",
+    )
+    assert not QwenVoiceService._mentions_language(disk_error)
+    # Any error whose message merely contains the word "language" is not one.
+    assert not QwenVoiceService._mentions_language(
+        RuntimeError("the language model failed to load")
+    )
+    # The genuine runtime language rejections still match.
+    assert QwenVoiceService._mentions_language(
+        ValueError(
+            "For technical reasons, only a larger 24-layer model is available "
+            "for French. Please use the 'french_24l' language instead."
+        )
+    )
+    assert QwenVoiceService._mentions_language(
+        FileNotFoundError("No such file or directory: '.../config/swahili.yaml'")
+    )
+
+
+def test_pocket_disk_full_detector_walks_the_cause_chain() -> None:
+    """A wrapped ENOSPC must still be detected as a full disk."""
+
+    import errno
+
+    from soundmaster.core.tts import _is_disk_full
+
+    cause = OSError(errno.ENOSPC, "No space left on device", "model.safetensors")
+    wrapped = RuntimeError("Téléchargement impossible") 
+    wrapped.__cause__ = cause
+    assert _is_disk_full(wrapped)
+    assert _is_disk_full(RuntimeError("There is not enough space on the disk."))
+    assert not _is_disk_full(RuntimeError("Connection reset by peer"))
 
 
 def test_pocket_tts_does_not_require_a_managed_snapshot(

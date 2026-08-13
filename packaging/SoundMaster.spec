@@ -28,12 +28,28 @@ except Exception as error:  # noqa: BLE001 - fail loudly with actionable text
         "Cannot build the release: pocket_tts is not installed in this environment. "
         "Install it with `python -m pip install -e \".[pocket]\"` before running the build."
     ) from error
+# Qwen3-TTS is the recommended engine (first entry of the engine selector) and
+# faster-whisper provides its local transcription of reference clips. Both must
+# be bundled or the packaged app answers "runtime manque" for every engine but
+# the default. The release workflow installs the qwen stack (see release.yml); a
+# build environment missing it must fail loudly rather than ship a broken app.
+try:
+    qwen_datas, qwen_binaries, qwen_hiddenimports = collect_all("qwen_tts")
+    whisper_datas, whisper_binaries, whisper_hiddenimports = collect_all("faster_whisper")
+except Exception as error:  # noqa: BLE001 - fail loudly with actionable text
+    raise SystemExit(
+        "Cannot build the release: the Qwen3-TTS runtime (qwen-tts / faster-whisper) "
+        "is not installed in this environment. Install the tts stack (see "
+        "release.yml) before running the build."
+    ) from error
 
 datas = [
     (str(SRC / "soundmaster" / "resources"), "soundmaster/resources"),
     *sounddevice_datas,
     *soundfile_datas,
     *pocket_datas,
+    *qwen_datas,
+    *whisper_datas,
 ]
 
 hiddenimports = [
@@ -41,9 +57,13 @@ hiddenimports = [
     *collect_submodules("keyboard"),
     "soundmaster.__main__",
     "soundmaster.resources",
+    "torch",
+    "torchaudio",
     *sounddevice_hiddenimports,
     *soundfile_hiddenimports,
     *pocket_hiddenimports,
+    *qwen_hiddenimports,
+    *whisper_hiddenimports,
     *collect_submodules("soundmaster.core"),
     *collect_submodules("soundmaster.ui"),
 ]
@@ -51,7 +71,13 @@ hiddenimports = [
 analysis = Analysis(
     [str(SRC / "soundmaster" / "main.py")],
     pathex=[str(SRC)],
-    binaries=[*sounddevice_binaries, *soundfile_binaries, *pocket_binaries],
+    binaries=[
+        *sounddevice_binaries,
+        *soundfile_binaries,
+        *pocket_binaries,
+        *qwen_binaries,
+        *whisper_binaries,
+    ],
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
