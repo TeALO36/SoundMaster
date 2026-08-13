@@ -53,6 +53,18 @@ ENGINE_RUNTIMES: dict[str, tuple[str, str | None]] = {
 }
 
 
+def engine_runtime_present(engine_key: str) -> bool:
+    """Whether the engine's package is on disk. Fast, and imports nothing.
+
+    Used to build the engine list, where the cost of importing five runtimes
+    would be paid at every window construction. It answers "is it there", not
+    "does it work" — see :func:`is_engine_runtime_installed` for that.
+    """
+
+    runtime = ENGINE_RUNTIMES.get(engine_key)
+    return runtime is not None and _module_available(runtime[0])
+
+
 @cache
 def is_engine_runtime_installed(engine_key: str) -> bool:
     """Whether the engine can actually be loaded, not merely located.
@@ -63,16 +75,14 @@ def is_engine_runtime_installed(engine_key: str) -> bool:
     import is performed for real and the symbol the loader uses is checked.
 
     Only called just before a generation — which imports the engine anyway — and
-    memoised, so the cost is paid once per process at worst.
+    memoised, so the cost is paid once per process at worst. Call
+    ``is_engine_runtime_installed.cache_clear()`` when the environment changes
+    under the process, as tests do.
     """
 
-    runtime = ENGINE_RUNTIMES.get(engine_key)
-    if runtime is None:
+    if not engine_runtime_present(engine_key):
         return False
-    module_name, symbol = runtime
-    # Cheap negative first: no need to import anything when nothing is there.
-    if not _module_available(module_name):
-        return False
+    module_name, symbol = ENGINE_RUNTIMES[engine_key]
     try:
         import importlib
 
