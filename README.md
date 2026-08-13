@@ -214,7 +214,7 @@ Pour vérifier l’environnement :
 
 ## Modèles vocaux locaux
 
-Le téléchargement se fait avec `huggingface_hub.snapshot_download`. SoundMaster n’appelle pas de service d’inférence distant et les dépôts publics ne nécessitent pas de clé API.
+Le téléchargement se fait avec `huggingface_hub` (résolution des fichiers via l’API du Hub, puis `hf_hub_download` fichier par fichier, avec reprise des téléchargements partiels et progression affichée dans l’application). SoundMaster n’appelle pas de service d’inférence distant et les dépôts publics ne nécessitent pas de clé API. Le dossier de stockage des modèles est choisi dans Paramètres → Modèles vocaux (par défaut `%LOCALAPPDATA%\SoundMaster\models`).
 
 ```bat
 telecharger_modeles.bat qwen3-tts

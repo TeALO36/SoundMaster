@@ -71,7 +71,9 @@ from soundmaster.core.models import (
     download_model,
     get_profile,
     is_downloaded,
+    model_directory,
     model_size_str,
+    set_model_directory,
 )
 from soundmaster.core.myinstants import (
     MyInstantResult,
@@ -138,6 +140,7 @@ VOICE_LANGUAGES: tuple[tuple[str, str], ...] = (
     ("Auto (anglais par défaut)", "Auto"),
 )
 DEFAULT_LANGUAGE_PREFERENCE = "default_language"
+MODEL_DIRECTORY_PREFERENCE = "model_directory"
 
 
 def _module_available(module_name: str) -> bool:
@@ -502,6 +505,8 @@ class DownloadProgressRow(QWidget):
 
 class ModelDownloadThread(QThread):
     finished_signal = pyqtSignal(bool, str, str)
+    # Emitted after each file: (downloaded_bytes, total_bytes, filename).
+    progress_signal = pyqtSignal(int, int, str)
 
     def __init__(self, profile: ModelProfile, paths: AppPaths, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -510,10 +515,15 @@ class ModelDownloadThread(QThread):
 
     def run(self) -> None:
         try:
-            download_model(self.profile, self.paths)
+            download_model(
+                self.profile, self.paths, progress=self._report_progress
+            )
             self.finished_signal.emit(True, self.profile.key, f"Téléchargement du modèle {self.profile.key} terminé avec succès !")
         except Exception as err:
             self.finished_signal.emit(False, self.profile.key, str(err))
+
+    def _report_progress(self, downloaded: int, total: int, filename: str) -> None:
+        self.progress_signal.emit(downloaded, total, filename)
 
 
 class PocketInstallThread(QThread):
@@ -631,6 +641,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.paths, self.config = paths, config
         self.library = SoundLibrary(paths.database)
+        # Restore the user-chosen model folder (e.g. a second disk) before any
+        # model status/size lookup runs.
+        saved_model_dir = self.library.preference(MODEL_DIRECTORY_PREFERENCE, "")
+        if saved_model_dir:
+            set_model_directory(Path(saved_model_dir))
         self.legal_profile, self.legal_profile_path = legal_profile, legal_profile_path
         self._players: dict[bool, object] = {}
         self._player_sources: dict[bool, str] = {}
@@ -1558,11 +1573,97 @@ class MainWindow(QMainWindow):
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
+        # Where the models are stored — lets the user pick a disk with room
+        # (e.g. D:) without touching environment variables.
+        self.model_directory_label = QLabel()
+        self.model_directory_label.setWordWrap(True)
+        layout.addWidget(self.model_directory_label)
+        dir_actions = QHBoxLayout()
+        dir_actions.setSpacing(8)
+        self.model_directory_button = QPushButton("Changer le dossier des modèles…")
+        self.model_directory_button.setObjectName("compactButton")
+        self.model_directory_button.setToolTip(
+            "Choisissez un dossier sur un disque disposant d’espace libre "
+            r"(ex. D:\SoundMaster-models) pour y stocker les modèles téléchargés."
+        )
+        self.model_directory_button.clicked.connect(self._choose_model_directory)
+        dir_actions.addWidget(self.model_directory_button, 1)
+        self.model_directory_reset_button = QPushButton("Réinitialiser")
+        self.model_directory_reset_button.setObjectName("compactButton")
+        self.model_directory_reset_button.setToolTip(
+            "Revenir au dossier par défaut (%LOCALAPPDATA%\\SoundMaster\\models)."
+        )
+        self.model_directory_reset_button.clicked.connect(self._reset_model_directory)
+        dir_actions.addWidget(self.model_directory_reset_button)
+        layout.addLayout(dir_actions)
+
+        self.voice_models_progress = QProgressBar()
+        self.voice_models_progress.setVisible(False)
+        self.voice_models_progress.setTextVisible(False)
+        layout.addWidget(self.voice_models_progress)
+        self.voice_models_progress_label = QLabel("")
+        self.voice_models_progress_label.setObjectName("muted")
+        self.voice_models_progress_label.setWordWrap(True)
+        self.voice_models_progress_label.setVisible(False)
+        layout.addWidget(self.voice_models_progress_label)
+
+        self._refresh_model_directory_label()
         self.voice_models_cards_layout = QVBoxLayout()
         self.voice_models_cards_layout.setSpacing(8)
         layout.addLayout(self.voice_models_cards_layout)
         self._refresh_voice_model_settings()
         return group
+
+    def _refresh_model_directory_label(self) -> None:
+        """Show the active model folder with the free space available on it."""
+
+        directory = model_directory(self.paths)
+        try:
+            usage = shutil.disk_usage(directory)
+            free_text = f"{usage.free / (1024**3):.0f} Go libres"
+        except OSError:
+            free_text = "espace inconnu"
+        self.model_directory_label.setText(
+            f"<b>Dossier des modèles :</b> {directory}<br>"
+            f"<span style='color: #94a3b8;'>{free_text} — les modèles téléchargés y seront enregistrés.</span>"
+        )
+
+    def _choose_model_directory(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "Choisir le dossier des modèles",
+            str(model_directory(self.paths)),
+        )
+        if not chosen:
+            return
+        directory = Path(chosen).expanduser().resolve()
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            QMessageBox.warning(
+                self,
+                "Dossier inaccessible",
+                f"Impossible de créer le dossier {directory} : {error}",
+            )
+            return
+        set_model_directory(directory)
+        self.library.set_preference(MODEL_DIRECTORY_PREFERENCE, str(directory))
+        self.statusBar().showMessage(
+            f"Dossier des modèles défini : {directory}", 5000
+        )
+        self._refresh_model_directory_label()
+        self._refresh_voice_model_settings()
+
+    def _reset_model_directory(self) -> None:
+        set_model_directory(None)
+        self.library.set_preference(MODEL_DIRECTORY_PREFERENCE, "")
+        self.statusBar().showMessage(
+            "Dossier des modèles réinitialisé (dossier par défaut)", 5000
+        )
+        self._refresh_model_directory_label()
+        self._refresh_voice_model_settings()
 
     def _refresh_voice_model_settings(self) -> None:
         if not hasattr(self, "voice_models_cards_layout"):
@@ -1715,20 +1816,72 @@ class MainWindow(QMainWindow):
         self._refresh_voice_model_settings()
 
     def _download_voice_model(self, profile: ModelProfile) -> None:
-        self.statusBar().showMessage(f"Téléchargement du modèle {profile.key} en cours...", 10000)
+        self.statusBar().showMessage(
+            f"Téléchargement du modèle {profile.key} en cours…", 15000
+        )
+        self._show_model_download_progress(0, 1, f"Préparation du téléchargement de {profile.key}…")
         if not hasattr(self, "_model_download_threads"):
             self._model_download_threads = []
         thread = ModelDownloadThread(profile, self.paths, self)
+        thread.progress_signal.connect(self._voice_model_download_progress)
         thread.finished_signal.connect(self._voice_model_download_finished)
         thread.start()
         self._model_download_threads.append(thread)
 
+    def _show_model_download_progress(
+        self, downloaded: int, total: int, message: str
+    ) -> None:
+        """Drive the shared download bar used by model and Pocket TTS installs."""
+
+        if not hasattr(self, "voice_models_progress"):
+            return
+        self.voice_models_progress.setVisible(True)
+        if total <= 0:
+            self.voice_models_progress.setRange(0, 0)  # indeterminate
+            self.voice_models_progress.setValue(0)
+            self.voice_models_progress.setTextVisible(False)
+        else:
+            self.voice_models_progress.setRange(0, max(total, 1))
+            self.voice_models_progress.setValue(max(0, min(downloaded, total)))
+            self.voice_models_progress.setTextVisible(True)
+            percent = int(downloaded * 100 / max(total, 1))
+            self.voice_models_progress.setFormat(f"{percent} %")
+        self.voice_models_progress_label.setText(message)
+        self.voice_models_progress_label.setVisible(True)
+
+    def _hide_model_download_progress(self) -> None:
+        if hasattr(self, "voice_models_progress"):
+            self.voice_models_progress.setVisible(False)
+        if hasattr(self, "voice_models_progress_label"):
+            self.voice_models_progress_label.setVisible(False)
+
+    def _voice_model_download_progress(
+        self, downloaded: int, total: int, filename: str
+    ) -> None:
+        self._show_model_download_progress(
+            downloaded,
+            total,
+            f"{filename} — {self._format_bytes(downloaded)} / {self._format_bytes(total)}",
+        )
+
     def _voice_model_download_finished(self, success: bool, key: str, message: str) -> None:
+        self._hide_model_download_progress()
         if success:
             self.statusBar().showMessage(message, 5000)
         else:
             QMessageBox.warning(self, "Téléchargement échoué", message)
         self._refresh_voice_model_settings()
+
+    def _format_bytes(self, size: int) -> str:
+        """Human-readable byte size (Mo/Go)."""
+
+        if size >= 1024**3:
+            return f"{size / (1024**3):.1f} Go"
+        if size >= 1024**2:
+            return f"{size / (1024**2):.0f} Mo"
+        if size >= 1024:
+            return f"{size / 1024:.0f} Ko"
+        return f"{size} o"
 
     def _install_pocket_tts(self, profile: ModelProfile) -> None:
         """Download (or repair) the Pocket TTS voice-cloning weights.
@@ -1751,6 +1904,11 @@ class MainWindow(QMainWindow):
             f"Installation de Pocket TTS ({language}) — téléchargement des poids…",
             15000,
         )
+        # The runtime downloads its own weights without a byte callback, so the
+        # shared bar runs indeterminate during the install.
+        self._show_model_download_progress(
+            0, 0, f"Téléchargement des poids Pocket TTS ({language})…"
+        )
         if not hasattr(self, "_pocket_install_threads"):
             self._pocket_install_threads = []
         thread = PocketInstallThread(
@@ -1770,6 +1928,7 @@ class MainWindow(QMainWindow):
         return str(self.library.preference(DEFAULT_LANGUAGE_PREFERENCE, "French"))
 
     def _pocket_install_finished(self, success: bool, message: str) -> None:
+        self._hide_model_download_progress()
         if success:
             self.statusBar().showMessage(message, 6000)
         else:

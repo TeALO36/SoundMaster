@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,13 +72,29 @@ MODEL_PROFILES: tuple[ModelProfile, ...] = (
     ),
     ModelProfile(
         key="f5-tts",
-        repository="SWAC/F5-TTS",
+        repository="SWivid/F5-TTS",
         directory_name="F5-TTS",
         purpose="Clonage expressif avec émotions textuelles (ex: [sad], [happy])",
         approximate_storage="~1,8 Go",
-        license_reference="https://huggingface.co/SWAC/F5-TTS",
+        license_reference="https://huggingface.co/SWivid/F5-TTS",
     ),
 )
+
+
+# The user can pick a model folder at runtime (e.g. on a second disk). It is
+# applied through :func:`set_model_directory` and takes precedence over the
+# ``SOUNDMASTER_MODEL_DIR`` environment variable so a choice made in the UI is
+# never silently overridden by a stale environment variable.
+_model_directory_override: Path | None = None
+
+
+def set_model_directory(directory: Path | None) -> None:
+    """Redirect all model storage to ``directory`` (or back to the default)."""
+
+    global _model_directory_override
+    _model_directory_override = (
+        Path(directory).expanduser().resolve() if directory is not None else None
+    )
 
 
 class ModelDownloadError(RuntimeError):
@@ -86,6 +102,8 @@ class ModelDownloadError(RuntimeError):
 
 
 def model_directory(paths: AppPaths) -> Path:
+    if _model_directory_override is not None:
+        return _model_directory_override
     configured = os.environ.get(MODEL_DIR_ENV)
     if configured:
         return Path(configured).expanduser().resolve()
@@ -151,17 +169,28 @@ def delete_model(profile: ModelProfile, paths: AppPaths) -> bool:
     return False
 
 
-def download_model(profile: ModelProfile, paths: AppPaths) -> Path:
+def download_model(
+    profile: ModelProfile,
+    paths: AppPaths,
+    progress: Callable[[int, int, str], None] | None = None,
+) -> Path:
     """Download a public repository into the app's model directory.
 
-    ``snapshot_download`` resumes partial downloads and writes the complete snapshot
-    into a stable directory. Passing ``token=None`` makes the no-API-key behavior
-    explicit; private or gated repositories are rejected rather than prompting.
+    Files are resolved through the Hub metadata API (so the total size is known
+    up front) and fetched one by one with ``hf_hub_download``, which resumes
+    partial downloads and writes real files into ``local_dir``. ``progress`` is
+    invoked after each file with ``(downloaded_bytes, total_bytes, filename)``.
+    Passing ``token=None`` makes the no-API-key behavior explicit; private or
+    gated repositories are rejected rather than prompting.
     """
 
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    # The packaged app has no console (stdout/stderr are None): tqdm progress
+    # bars crash there with "'NoneType' object has no attribute 'write'". The
+    # GUI shows its own progress, so never render the library's bars.
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
     try:
-        from huggingface_hub import snapshot_download
+        from huggingface_hub import HfApi, hf_hub_download
     except ImportError as error:
         raise ModelDownloadError(
             "huggingface_hub manque. Lancez setup_env.bat ou installez l’extra models."
@@ -170,11 +199,30 @@ def download_model(profile: ModelProfile, paths: AppPaths) -> Path:
     destination = model_path(profile, paths)
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
-        snapshot_download(
-            repo_id=profile.repository,
-            local_dir=str(destination),
-            token=None,
-        )
+        info = HfApi().model_info(profile.repository, files_metadata=True, token=None)
+        files = [
+            (sibling.rfilename, int(sibling.size or 0))
+            for sibling in info.siblings
+            if sibling.rfilename != ".gitattributes"
+        ]
+    except Exception as error:
+        raise ModelDownloadError(
+            f"Téléchargement impossible pour {profile.repository}: {error}"
+        ) from error
+
+    total = sum(size for _name, size in files)
+    downloaded = 0
+    try:
+        for rfilename, size in files:
+            hf_hub_download(
+                repo_id=profile.repository,
+                filename=rfilename,
+                local_dir=str(destination),
+                token=None,
+            )
+            downloaded += size
+            if progress is not None:
+                progress(downloaded, total, rfilename)
     except Exception as error:
         raise ModelDownloadError(
             f"Téléchargement impossible pour {profile.repository}: {error}"

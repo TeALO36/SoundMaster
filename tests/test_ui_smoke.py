@@ -1284,6 +1284,72 @@ def test_pocket_install_starts_a_weight_download_thread(
     window._install_pocket_tts(get_profile("pocket-tts"))
     assert started == [window._pocket_install_language()]
     assert "téléchargement des poids" in window.statusBar().currentMessage()
+    # The install drives the shared download bar (indeterminate for Pocket TTS).
+    window._select_settings()
+    qapp.processEvents()
+    assert window.voice_models_progress.isVisibleTo(window) is True
+    assert window.voice_models_progress.maximum() == 0
+
+    window._allow_close = True
+    window.close()
+
+
+def test_model_download_progress_shows_percentage(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """The shared download bar reports real byte progress with a percentage."""
+
+    window = _unlocked_window(tmp_path)
+    window.show()
+    window._select_settings()
+    qapp.processEvents()
+
+    assert window.voice_models_progress.isVisibleTo(window) is False
+    window._voice_model_download_progress(250, 1000, "model.safetensors")
+    assert window.voice_models_progress.isVisibleTo(window) is True
+    assert window.voice_models_progress.maximum() == 1000
+    assert window.voice_models_progress.value() == 250
+    assert "model.safetensors" in window.voice_models_progress_label.text()
+    assert "25 %" in window.voice_models_progress.format()
+
+    window._voice_model_download_finished(True, "qwen3-tts", "Terminé")
+    assert window.voice_models_progress.isVisibleTo(window) is False
+
+    window._allow_close = True
+    window.close()
+
+
+def test_model_directory_can_be_changed_and_reset_from_settings(
+    qapp: QApplication, tmp_path: Path, monkeypatch
+) -> None:
+    """The model folder chooser persists a D:-style location and resets it."""
+
+    window = _unlocked_window(tmp_path)
+    window.show()
+
+    assert window.model_directory_button.text() == "Changer le dossier des modèles…"
+    assert str(window.paths.models) in window.model_directory_label.text()
+
+    chosen = tmp_path / "mes-modeles"
+    monkeypatch.setattr(
+        "soundmaster.ui.main_window.QFileDialog.getExistingDirectory",
+        lambda *args, **kwargs: str(chosen),
+    )
+    window._choose_model_directory()
+    assert window.library.preference("model_directory", "") == str(chosen.resolve())
+    assert str(chosen.resolve()) in window.model_directory_label.text()
+
+    # The choice also drives the actual model storage location.
+    from soundmaster.core.models import model_directory as resolve_model_dir
+
+    try:
+        assert resolve_model_dir(window.paths) == chosen.resolve()
+    finally:
+        # Never leak the global override into the rest of the suite.
+        window._reset_model_directory()
+    assert window.library.preference("model_directory", "x") == ""
+    assert str(window.paths.models) in window.model_directory_label.text()
+    assert resolve_model_dir(window.paths) == window.paths.models
 
     window._allow_close = True
     window.close()

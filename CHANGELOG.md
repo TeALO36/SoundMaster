@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.1 — 2026-08-13
+
+### Added
+
+- **Barre de progression des téléchargements avec pourcentage** : les téléchargements de modèles (Qwen3-TTS, OmniVoice, F5-TTS…) affichent maintenant une vraie progression — pourcentage, octets téléchargés sur le total et nom du fichier en cours — dans Paramètres → Modèles vocaux. L’installation de Pocket TTS affiche une barre indéterminée (ses poids sont téléchargés par le runtime lui-même, sans callback d’octets).
+- **Dossier des modèles configurable** : une ligne « Dossier des modèles » dans Paramètres → Modèles vocaux permet de choisir le disque/dossier où stocker les modèles (ex. `D:\SoundMaster-models`), avec l’espace libre affiché, un bouton « Réinitialiser » pour revenir au dossier par défaut, et le choix conservé d’une session à l’autre.
+
+### Fixed
+
+- **« Téléchargement impossible pour Qwen/Qwen3-TTS-12Hz-0.6B-Base: 'NoneType' object has no attribute 'write' »** : dans l’application empaquetée (sans console), `sys.stdout`/`sys.stderr` sont `None`, et les barres de progression de `huggingface_hub` (tqdm) écrivent dessus — ce qui faisait échouer **tout** téléchargement de modèle au premier octet. Les barres de la bibliothèque sont désormais désactivées (`HF_HUB_DISABLE_PROGRESS_BARS=1`) au démarrage de l’application et dans `download_model` ; l’interface affiche son propre statut, et les poids Pocket TTS (qui utilisent aussi `hf_hub_download`) sont couverts par le même correctif.
+- **« Téléchargement impossible pour SWAC/F5-TTS: 404 Repository Not Found »** : le dépôt `SWAC/F5-TTS` n’existe pas sur Hugging Face — le vrai dépôt officiel est `SWivid/F5-TTS`. F5-TTS pouvait donc **jamais** s’installer ; il est corrigé.
+- Le téléchargement passe de `snapshot_download` à une résolution fichier par fichier (`HfApi.model_info` + `hf_hub_download`) : c’est ce qui permet la progression en octets, et la reprise des téléchargements partiels est conservée.
+
+### Validation
+
+- 140 tests automatisés (5 nouveaux : le dépôt F5 pointe vers `SWivid/F5-TTS`, le dossier des modèles est redéfinissable à l’exécution et dans l’interface, la progression en octets est rapportée fichier par fichier, et la barre de progression affiche le pourcentage). Vérification réelle effectuée sur le disque D : téléchargement complet d’un dépôt avec progression (0 % → 100 %) dans `D:\…`, même avec `stdout`/`stderr` nuls (conditions de l’app empaquetée).
+
 ## 0.9.0 — 2026-08-13
 
 ### Added

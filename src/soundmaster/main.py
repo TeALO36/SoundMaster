@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import sys
+
+# In the packaged windowed app there is no console, so ``sys.stdout`` and
+# ``sys.stderr`` are ``None``. huggingface_hub renders its download progress
+# bars with tqdm, which writes to those streams and crashes with
+# "'NoneType' object has no attribute 'write'". The UI already reports its own
+# progress, so disable the library's bars before anything can import it.
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 from PyQt6.QtWidgets import QApplication
 
