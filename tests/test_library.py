@@ -86,3 +86,99 @@ def test_library_persists_favorites_history_and_keybinds(tmp_path: Path) -> None
     assert deleted_sample == updated_sample
     assert reopened.voice_profiles() == []
     reopened.close()
+
+
+def test_generation_history_records_filters_and_deletes_by_voice(tmp_path: Path) -> None:
+    """The history must say which voice spoke, filter on it, and be erasable."""
+
+    library = SoundLibrary(tmp_path / "soundmaster.db")
+    sample = tmp_path / "sample.wav"
+    sample.write_bytes(b"RIFF")
+    first = tmp_path / "a.wav"
+    first.write_bytes(b"RIFF")
+    second = tmp_path / "b.wav"
+    second.write_bytes(b"RIFF")
+    third = tmp_path / "c.wav"
+    third.write_bytes(b"RIFF")
+
+    library.add_voice_generation("a", "Bonjour tout le monde", sample, first,
+                                 "pocket-tts", profile_name="Discord")
+    library.add_voice_generation("b", "Attention derriere toi", sample, second,
+                                 "pocket-tts", profile_name="Jeu")
+    # A generation made without saving a voice keeps an empty profile.
+    library.add_voice_generation("c", "Sans profil", sample, third, "pocket-tts")
+
+    assert library.voice_generation_profiles() == ["Discord", "Jeu"]
+    assert [g.profile_name for g in library.voice_generations()] == ["", "Jeu", "Discord"]
+
+    # Filtering by voice.
+    assert [g.title for g in library.voice_generations(profile_name="Discord")] == ["a"]
+    assert len(library.voice_generations(profile_name="Jeu")) == 1
+    assert len(library.voice_generations()) == 3
+
+    # Searching covers the spoken text and the voice name, not just the title.
+    assert [g.title for g in library.voice_generations("derriere")] == ["b"]
+    assert [g.title for g in library.voice_generations("discord")] == ["a"]
+
+    # Both filters combine.
+    assert library.voice_generations("bonjour", "Jeu") == []
+
+    removed = library.delete_voice_generation(
+        library.voice_generations(profile_name="Discord")[0].id
+    )
+    assert removed == first
+    assert len(library.voice_generations()) == 2
+
+    remaining = library.clear_voice_generations()
+    assert sorted(p.name for p in remaining) == ["b.wav", "c.wav"]
+    assert library.voice_generations() == []
+    assert library.voice_generation_profiles() == []
+    library.close()
+
+
+def test_history_columns_are_added_to_an_existing_database(tmp_path: Path) -> None:
+    """An install created before the column must not break on upgrade."""
+
+    import sqlite3
+
+    database = tmp_path / "old.db"
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        """
+        CREATE TABLE voice_generations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            text TEXT NOT NULL,
+            sample_path TEXT NOT NULL,
+            output_path TEXT NOT NULL,
+            model TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO voice_generations(title, text, sample_path, output_path, model)
+        VALUES ('ancien', 'texte', 's.wav', 'o.wav', 'pocket-tts');
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    library = SoundLibrary(database)
+    generations = library.voice_generations()
+
+    assert len(generations) == 1
+    assert generations[0].profile_name == ""
+    assert generations[0].duration_seconds == 0.0
+    library.close()
+
+
+def test_deleting_a_sound_also_removes_its_shortcut(tmp_path: Path) -> None:
+    library = SoundLibrary(tmp_path / "soundmaster.db")
+    audio = tmp_path / "s.wav"
+    audio.write_bytes(b"RIFF")
+    sound = library.add_sound("Son", audio, favorite=True)
+    library.set_keybind(sound.id, "alt+9")
+
+    library.delete_sound(sound.id)
+
+    assert library.sounds() == []
+    assert library.keybinds() == {}
+    library.close()

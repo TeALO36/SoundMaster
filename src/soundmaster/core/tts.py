@@ -11,6 +11,7 @@ from __future__ import annotations
 import errno
 import gc
 import inspect
+from functools import cache
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -20,6 +21,13 @@ from soundmaster.core.models import get_profile, model_path
 from soundmaster.core.pocket_mirror import configured_mirror, mirror_config
 
 SUPPORTED_ENGINE_KEYS = ("pocket-tts", "qwen3-tts", "qwen3-tts-0.6b", "omnivoice", "f5-tts")
+
+# Cloned takes speak faster than the voice they imitate: measured across 72
+# takes on VoiceClone, the median was 59% too fast and none was ever slower.
+# Re-stretching real takes at this rate brought continuous speech from 1.47x
+# to 0.99x of the reference. Only Pocket TTS was measured; the other engines
+# share the default because the same complaint prompted the investigation.
+DEFAULT_CLONE_SPEED = 0.7
 
 
 def _module_available(module_name: str) -> bool:
@@ -33,24 +41,45 @@ def _module_available(module_name: str) -> bool:
         return False
 
 
-def is_engine_runtime_installed(engine_key: str) -> bool:
-    """Check if the python runtime dependencies for the engine are installed.
+# The module and the symbol each engine actually needs. Probing per engine
+# rather than by a shared dependency avoids reporting omnivoice as installed
+# merely because another engine shipped torch.
+ENGINE_RUNTIMES: dict[str, tuple[str, str | None]] = {
+    "pocket-tts": ("pocket_tts", "TTSModel"),
+    "qwen3-tts": ("qwen_tts", "Qwen3TTSModel"),
+    "qwen3-tts-0.6b": ("qwen_tts", "Qwen3TTSModel"),
+    "omnivoice": ("omnivoice", "OmniVoice"),
+    "f5-tts": ("f5_tts", None),
+}
 
-    Each engine is probed by its own package rather than by a shared
-    dependency: checking ``import torch`` for omnivoice would report it
-    installed as soon as any engine ships torch, even though ``omnivoice``
-    itself is absent from the build.
+
+@cache
+def is_engine_runtime_installed(engine_key: str) -> bool:
+    """Whether the engine can actually be loaded, not merely located.
+
+    ``find_spec`` alone is not enough: a packaged build can expose a module
+    whose real import fails, and the engine was then selected only to die later
+    with "Le runtime … manque" instead of falling back to one that works. So the
+    import is performed for real and the symbol the loader uses is checked.
+
+    Only called just before a generation — which imports the engine anyway — and
+    memoised, so the cost is paid once per process at worst.
     """
 
-    if engine_key == "pocket-tts":
-        return _module_available("pocket_tts")
-    if engine_key == "f5-tts":
-        return _module_available("f5_tts")
-    if engine_key in ("qwen3-tts", "qwen3-tts-0.6b"):
-        return _module_available("qwen_tts")
-    if engine_key == "omnivoice":
-        return _module_available("omnivoice")
-    return False
+    runtime = ENGINE_RUNTIMES.get(engine_key)
+    if runtime is None:
+        return False
+    module_name, symbol = runtime
+    # Cheap negative first: no need to import anything when nothing is there.
+    if not _module_available(module_name):
+        return False
+    try:
+        import importlib
+
+        module = importlib.import_module(module_name)
+    except Exception:  # noqa: BLE001 - a broken runtime is an absent runtime.
+        return False
+    return symbol is None or hasattr(module, symbol)
 
 # Pocket TTS ships one bundle per language inside the same repository and picks
 # it through ``load_model(language=...)``. The bundles are NOT uniform, so this
@@ -286,6 +315,9 @@ class QwenVoiceService:
     """Lazy process-local wrapper for the supported local cloning engines."""
 
     _POCKET_STATE_CACHE_SIZE = 4
+    # One retry is enough: collapse is occasional, and a second draw of the
+    # same defect is rare. More would make a bad take feel like a hang.
+    _POCKET_PITCH_ATTEMPTS = 2
 
     def __init__(self, paths: AppPaths) -> None:
         self.paths = paths
@@ -462,10 +494,55 @@ class QwenVoiceService:
         most of why this engine feels instant compared to the others.
         """
 
+        settings = settings or {}
         state = self._pocket_voice_state(model, ref_audio)
-        kwargs = self._supported_kwargs(model.generate_audio, settings or {})
-        audio = model.generate_audio(state, text, **kwargs)
-        return self._to_samples(audio), int(getattr(model, "sample_rate", 24_000))
+        kwargs = self._supported_kwargs(model.generate_audio, settings)
+        rate = int(getattr(model, "sample_rate", 24_000))
+
+        # The sampler occasionally locks onto half the reference pitch. The take
+        # is fluent, so nothing else notices; median pitch catches it in one
+        # number, and a fresh draw fixes it.
+        samples = None
+        for attempt in range(self._POCKET_PITCH_ATTEMPTS):
+            samples = self._to_samples(model.generate_audio(state, text, **kwargs))
+            if attempt == self._POCKET_PITCH_ATTEMPTS - 1:
+                break
+            if not self._collapsed_octave(samples, ref_audio, rate):
+                break
+
+        return self._apply_speaking_rate(samples, settings), rate
+
+    def _collapsed_octave(self, samples: Any, ref_audio: Path, rate: int) -> bool:
+        """Whether the take fell an octave away from the reference voice."""
+
+        try:
+            import soundfile as sf
+
+            from soundmaster.core.voice_quality import is_octave_collapsed
+
+            reference, reference_rate = sf.read(str(ref_audio), dtype="float32")
+            return is_octave_collapsed(samples, reference, rate, int(reference_rate))
+        except Exception:  # noqa: BLE001 - a failed check must never lose a take.
+            return False
+
+    @staticmethod
+    def _apply_speaking_rate(samples: Any, settings: dict[str, object]) -> Any:
+        """Slow the delivery down without moving the pitch.
+
+        Pocket TTS has no tempo control, so the correction happens here. Every
+        one of the 72 takes measured on VoiceClone spoke faster than the voice it
+        imitated, median 59%, and delivery is part of recognising a voice.
+        """
+
+        speed = settings.get("speed")
+        if not isinstance(speed, (int, float)) or abs(float(speed) - 1.0) < 1e-3:
+            return samples
+        try:
+            from soundmaster.core.voice_quality import time_stretch
+
+            return time_stretch(samples, float(speed))
+        except Exception:  # noqa: BLE001 - never fail a generation over tempo.
+            return samples
 
     def _pocket_voice_state(self, model: Any, ref_audio: Path) -> Any:
         """Reuse a cloned voice state instead of re-encoding the sample.

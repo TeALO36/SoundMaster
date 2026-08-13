@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soundmaster"
-version = "0.9.2"
+version = "0.9.3"
 description = "A local-first Windows soundboard for gamers."
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -54,6 +54,8 @@ tts = [
 pocket = [
     "pocket-tts",
     "soundfile>=0.12,<1",
+    # Decodes the audio track of imported videos (MP4, MOV, …).
+    "av>=12,<19",
 ]
 voice-auto = [
     "faster-whisper>=1.1,<2",

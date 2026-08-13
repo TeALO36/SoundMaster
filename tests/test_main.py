@@ -192,3 +192,35 @@ def test_configure_auto_persists_the_choice_when_disk_full(
     assert saved, "the auto-selected folder must be remembered"
     assert cache == Path(saved) / "hf-cache"
     assert os.environ["HF_HUB_CACHE"] == str(cache)
+
+
+def test_a_sleeping_network_drive_is_never_probed(monkeypatch, tmp_path) -> None:
+    """Regression: startup could freeze for the whole SMB timeout.
+
+    The drive scan called ``exists()`` before asking Windows what kind of drive
+    it was, so a mapped-but-asleep NAS was touched — and blocked — even though
+    it was rejected as a network share on the very next line.
+    """
+
+    import shutil
+
+    from soundmaster import main as main_module
+
+    touched: list[str] = []
+
+    real_exists = Path.exists
+
+    def spying_exists(self):
+        touched.append(str(self))
+        return real_exists(self)
+
+    monkeypatch.setattr(Path, "exists", spying_exists)
+    # Everything looks like a network share: nothing may be probed at all.
+    monkeypatch.setattr(main_module, "_is_local_fixed_drive", lambda _root: False)
+    monkeypatch.setattr(
+        shutil, "disk_usage", lambda _p: shutil._ntuple_diskusage(1, 1, 0)
+    )
+
+    paths = _paths(tmp_path)
+    assert main_module._auto_model_directory(paths) is None
+    assert not any(item.endswith(":\\") for item in touched), touched

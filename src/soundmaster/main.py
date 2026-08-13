@@ -73,9 +73,15 @@ def _auto_model_directory(paths: AppPaths) -> Path | None:
     best: tuple[int, Path] | None = None
     for letter in "DEFGHIJKLMNOPQRSTUVWXYZ":
         root = Path(f"{letter}:\\")
-        if not root.exists() or root.anchor == default_anchor:
+        if root.anchor == default_anchor:
             continue
+        # Ask Windows what kind of drive this is *before* touching it. Probing a
+        # mapped network drive that is asleep blocks for the whole SMB timeout,
+        # and the drive would be rejected immediately afterwards anyway — that
+        # wait is what froze startup on machines with a NAS mapped.
         if not _is_local_fixed_drive(root):
+            continue
+        if not root.exists():
             continue
         try:
             candidate_free = shutil.disk_usage(root).free

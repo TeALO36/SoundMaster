@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.7.0"
+  #define MyAppVersion "0.9.3"
 #endif
 
 #define MyAppName "SoundMaster"

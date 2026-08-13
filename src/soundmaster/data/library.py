@@ -29,6 +29,7 @@ class VoiceGeneration:
     model: str
     created_at: str
     duration_seconds: float = 0.0
+    profile_name: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,12 +105,26 @@ class SoundLibrary:
         )
         self._migrate_voice_profiles_sample_paths()
         self._migrate_voice_generations_duration()
+        self._migrate_voice_generations_profile()
         self._connection.execute(
             "INSERT INTO schema_meta(key, value) VALUES ('version', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (str(self.SCHEMA_VERSION),),
         )
         self._connection.commit()
+
+    def _migrate_voice_generations_profile(self) -> None:
+        """Add profile_name to voice_generations if missing."""
+
+        columns = [
+            str(col["name"])
+            for col in self._connection.execute("PRAGMA table_info('voice_generations')").fetchall()
+        ]
+        if "profile_name" not in columns:
+            self._connection.execute(
+                "ALTER TABLE voice_generations ADD COLUMN profile_name TEXT DEFAULT ''"
+            )
+            self._connection.commit()
 
     def _migrate_voice_generations_duration(self) -> None:
         """Add duration_seconds column to voice_generations if missing."""
@@ -228,6 +243,12 @@ class SoundLibrary:
             "SELECT * FROM sounds WHERE id = ?", (sound_id,)
         ).fetchone()
         return self._item(row) if row is not None else None
+
+    def delete_sound(self, sound_id: int) -> None:
+        """Remove a sound entry (and its shortcut, via the cascade)."""
+
+        self._connection.execute("DELETE FROM sounds WHERE id = ?", (sound_id,))
+        self._connection.commit()
 
     def set_favorite(self, sound_id: int, favorite: bool) -> None:
         self._connection.execute("UPDATE sounds SET favorite = ? WHERE id = ?", (int(favorite), sound_id))
@@ -373,10 +394,12 @@ class SoundLibrary:
         output_path: Path,
         model: str,
         duration_seconds: float = 0.0,
+        profile_name: str = "",
     ) -> VoiceGeneration:
         cursor = self._connection.execute(
-            "INSERT INTO voice_generations(title, text, sample_path, output_path, model, duration_seconds) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO voice_generations"
+            "(title, text, sample_path, output_path, model, duration_seconds, profile_name) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 title.strip() or "Voix générée",
                 text,
@@ -384,6 +407,7 @@ class SoundLibrary:
                 str(output_path),
                 model,
                 float(duration_seconds),
+                profile_name.strip(),
             ),
         )
         self._connection.commit()
@@ -405,17 +429,57 @@ class SoundLibrary:
             return None
         return float(row["avg_time"])
 
-    def voice_generations(self, query: str = "") -> list[VoiceGeneration]:
-        if query.strip():
-            rows = self._connection.execute(
-                "SELECT * FROM voice_generations WHERE LOWER(title) LIKE ? "
-                "OR LOWER(text) LIKE ? ORDER BY id DESC",
-                (f"%{query.strip().lower()}%", f"%{query.strip().lower()}%"),
-            ).fetchall()
-        else:
-            rows = self._connection.execute(
-                "SELECT * FROM voice_generations ORDER BY id DESC"
-            ).fetchall()
+    def voice_generation_profiles(self) -> list[str]:
+        """Distinct voice names present in the history, for the filter."""
+
+        rows = self._connection.execute(
+            "SELECT DISTINCT profile_name FROM voice_generations "
+            "WHERE profile_name IS NOT NULL AND profile_name <> '' ORDER BY profile_name"
+        ).fetchall()
+        return [str(row["profile_name"]) for row in rows]
+
+    def delete_voice_generation(self, generation_id: int) -> Path | None:
+        """Remove one entry and return the audio file it pointed at."""
+
+        row = self._connection.execute(
+            "SELECT output_path FROM voice_generations WHERE id = ?", (generation_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        self._connection.execute(
+            "DELETE FROM voice_generations WHERE id = ?", (generation_id,)
+        )
+        self._connection.commit()
+        return Path(str(row["output_path"]))
+
+    def clear_voice_generations(self) -> list[Path]:
+        """Empty the history and return every audio file it referenced."""
+
+        rows = self._connection.execute(
+            "SELECT output_path FROM voice_generations"
+        ).fetchall()
+        self._connection.execute("DELETE FROM voice_generations")
+        self._connection.commit()
+        return [Path(str(row["output_path"])) for row in rows]
+
+    def voice_generations(
+        self, query: str = "", profile_name: str = ""
+    ) -> list[VoiceGeneration]:
+        clauses: list[str] = []
+        parameters: list[object] = []
+        needle = query.strip().lower()
+        if needle:
+            # The spoken text is what people remember, so it is searched too.
+            clauses.append("(LOWER(title) LIKE ? OR LOWER(text) LIKE ? OR LOWER(profile_name) LIKE ?)")
+            parameters.extend([f"%{needle}%"] * 3)
+        wanted_profile = profile_name.strip()
+        if wanted_profile:
+            clauses.append("profile_name = ?")
+            parameters.append(wanted_profile)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self._connection.execute(
+            f"SELECT * FROM voice_generations {where} ORDER BY id DESC", parameters
+        ).fetchall()
         return [self._voice_generation(row) for row in rows]
 
     @staticmethod
@@ -453,7 +517,7 @@ class SoundLibrary:
     def _voice_generation(row: sqlite3.Row) -> VoiceGeneration:
         duration = 0.0
         try:
-            if "duration_seconds" in row.keys() and row["duration_seconds"] is not None:
+            if "duration_seconds" in row.keys() and row["duration_seconds"] is not None:  # noqa: SIM118 - sqlite3.Row membership tests values, not keys.
                 duration = float(row["duration_seconds"])
         except (KeyError, ValueError, TypeError):
             duration = 0.0
@@ -465,5 +529,11 @@ class SoundLibrary:
             output_path=str(row["output_path"]),
             model=str(row["model"]),
             created_at=str(row["created_at"]),
+            profile_name=(
+                str(row["profile_name"])
+                if "profile_name" in row.keys()  # noqa: SIM118 - sqlite3.Row, see above.
+                and row["profile_name"] is not None
+                else ""
+            ),
             duration_seconds=duration,
         )

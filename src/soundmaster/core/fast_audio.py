@@ -43,7 +43,7 @@ def load_audio_pcm(path: Path | str, target_sr: int = 44100) -> tuple[np.ndarray
         data = data[:, :2]
 
     if sr != target_sr:
-        num_samples = int(round(len(data) * target_sr / sr))
+        num_samples = round(len(data) * target_sr / sr)
         indices = np.linspace(0, len(data) - 1, num_samples)
         data = np.array(
             [np.interp(indices, np.arange(len(data)), data[:, c]) for c in range(2)]
@@ -132,7 +132,7 @@ class ContinuousAudioOutput:
             )
             self._stream.start()
             self._retry_pending = False
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 - audio backend boundary.
             logger.warning(f"ContinuousAudioOutput stream start error: {err}")
             self._stream = None
             self._start_retry_loop()
@@ -180,7 +180,7 @@ class ContinuousAudioOutput:
             for i, dev in enumerate(sd.query_devices()):
                 if dev["max_output_channels"] > 0 and name_str in dev["name"].lower():
                     return i
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - probing devices must never raise.
             pass
         return None
 
@@ -196,7 +196,7 @@ class ContinuousAudioOutput:
             try:
                 stream_to_close.stop()
                 stream_to_close.close()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - probing devices must never raise.
                 pass
 
         with self._lock:
@@ -256,7 +256,7 @@ class ContinuousAudioOutput:
             try:
                 stream_to_close.stop()
                 stream_to_close.close()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - probing devices must never raise.
                 pass
         if self._retry_thread is not None:
             self._retry_thread.join(timeout=2.0)
@@ -279,7 +279,7 @@ class FastAudioEngine:
             pcm, _ = load_audio_pcm(key)
             self._pcm_cache[key] = pcm
             return True
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 - audio backend boundary.
             logger.warning(f"Preload audio failed for {path}: {err}")
             return False
 
@@ -306,7 +306,7 @@ class FastAudioEngine:
             try:
                 pcm, _ = load_audio_pcm(key)
                 self._pcm_cache[key] = pcm
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001 - audio backend boundary.
                 logger.error(f"Play failed for {path}: {err}")
                 return False
 

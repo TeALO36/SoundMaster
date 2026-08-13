@@ -69,7 +69,10 @@ class PublisherDetails:
     country: str = "France"
     registration_number: str = ""
     vat_number: str = ""
-    contact_email: str = "teanokry@gmail.com"
+    # Deliberately empty: a personal address must never ship inside the
+    # application. The public contact channel is the project's issue tracker,
+    # which is a URL, not someone's mailbox.
+    contact_email: str = ""
     support_url: str = PROJECT_ISSUES_URL
     hosting_provider: str = "GitHub"
 
@@ -172,7 +175,9 @@ class LegalProfile:
         required_publisher = {
             "Nom légal de l’éditeur": self.publisher.legal_name,
             "Adresse de l’éditeur": self.publisher.address,
-            "E-mail de contact": self.publisher.contact_email,
+            # A contact channel is required, but it must not have to be a
+            # personal mailbox: the project's issue tracker satisfies it.
+            "Canal de contact": self.publisher.contact_email or self.publisher.support_url,
             "Pays de l’éditeur": self.publisher.country,
         }
         errors.extend(f"{label} manquant" for label, value in required_publisher.items() if not value.strip())
@@ -312,6 +317,25 @@ def _is_document_reference(value: str) -> bool:
     }
 
 
+# Contact addresses that earlier builds shipped as a default and wrote into
+# every user's legal_profile.json. Removing the default is not enough: the value
+# is already on disk on existing installs, so it is dropped on load.
+WITHDRAWN_CONTACT_EMAILS = frozenset({"teanokry@gmail.com"})
+
+
+def scrub_personal_data(profile: LegalProfile) -> bool:
+    """Drop contact details that must never have been distributed.
+
+    Returns whether anything was removed, so the caller can rewrite the file.
+    """
+
+    email = profile.publisher.contact_email.strip().lower()
+    if email and email in WITHDRAWN_CONTACT_EMAILS:
+        profile.publisher.contact_email = ""
+        return True
+    return False
+
+
 def load_legal_profile(path: Path) -> LegalProfile:
     """Load a profile, falling back safely when no profile exists yet."""
 
@@ -322,9 +346,17 @@ def load_legal_profile(path: Path) -> LegalProfile:
     if not isinstance(raw, dict):
         return LegalProfile()
     try:
-        return LegalProfile.from_dict(raw)
+        profile = LegalProfile.from_dict(raw)
     except (TypeError, ValueError):
         return LegalProfile()
+    if scrub_personal_data(profile):
+        # Persist immediately so the address disappears from disk, not just
+        # from the running session.
+        try:
+            save_legal_profile(path, profile)
+        except OSError:
+            pass
+    return profile
 
 
 def save_legal_profile(path: Path, profile: LegalProfile) -> None:

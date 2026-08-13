@@ -17,6 +17,7 @@ from PyQt6.QtGui import (
     QIcon,
     QKeyEvent,
     QKeySequence,
+    QShortcut,
     QTextCharFormat,
     QTextCursor,
 )
@@ -92,6 +93,7 @@ from soundmaster.core.pocket_mirror import (
     MIRROR_PREFERENCE_KEY,
 )
 from soundmaster.core.tts import (
+    DEFAULT_CLONE_SPEED,
     POCKET_GATED_HINT,
     QwenVoiceService,
     VoiceGenerationError,
@@ -267,6 +269,11 @@ class ShortcutCaptureButton(QPushButton):
         Qt.Key.Key_Meta,
     }
 
+    # Qt allows exactly one keyboard grab at a time. Without tracking who holds
+    # it, clicking a second row left the first one grabbing, so the new button
+    # received nothing and capture only worked on the second click.
+    _active_capture: ClassVar[ShortcutCaptureButton | None] = None
+
     def __init__(self, sequence: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("shortcutCaptureButton")
@@ -280,11 +287,19 @@ class ShortcutCaptureButton(QPushButton):
         return self._recording
 
     def mousePressEvent(self, event) -> None:
+        # Let the button settle focus first: grabbing the keyboard before the
+        # base class ran could lose the grab to the focus change.
+        super().mousePressEvent(event)
         if event.button() == Qt.MouseButton.LeftButton:
             self.start_recording()
-        super().mousePressEvent(event)
 
     def start_recording(self) -> None:
+        if self._recording:
+            return
+        previous = ShortcutCaptureButton._active_capture
+        if previous is not None and previous is not self:
+            previous.cancel_recording()
+        ShortcutCaptureButton._active_capture = self
         self._recording = True
         self.setFocus()
         self.grabKeyboard()
@@ -294,13 +309,28 @@ class ShortcutCaptureButton(QPushButton):
         self.setText("Appuyez sur les touches…")
         self.setToolTip("Appuyez simultanément sur les touches, ou Échap pour annuler")
 
+    def _release_capture(self) -> None:
+        """Give the keyboard back exactly once, whatever ended the capture."""
+
+        self._recording = False
+        self.releaseKeyboard()
+        if ShortcutCaptureButton._active_capture is self:
+            ShortcutCaptureButton._active_capture = None
+        self.setObjectName("shortcutCaptureButton")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
     def cancel_recording(self) -> None:
         if not self._recording:
             return
-        self._recording = False
-        self.releaseKeyboard()
-        self.setObjectName("")
+        self._release_capture()
         self._update_text()
+
+    def hideEvent(self, event) -> None:
+        # The shortcuts table rebuilds its rows; a destroyed button must not
+        # walk away still holding the keyboard.
+        self.cancel_recording()
+        super().hideEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if not self._recording:
@@ -321,9 +351,7 @@ class ShortcutCaptureButton(QPushButton):
         ).toString(QKeySequence.SequenceFormat.PortableText)
         sequence = self._normalise(sequence)
         if sequence:
-            self._recording = False
-            self.releaseKeyboard()
-            self.setObjectName("")
+            self._release_capture()
             self.sequence = sequence
             self._update_text()
             self.shortcut_recorded.emit(sequence)
@@ -525,7 +553,7 @@ class ModelDownloadThread(QThread):
                 self.profile, self.paths, progress=self._report_progress
             )
             self.finished_signal.emit(True, self.profile.key, f"Téléchargement du modèle {self.profile.key} terminé avec succès !")
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 - download failures are reported, not raised.
             self.finished_signal.emit(False, self.profile.key, str(err))
 
     def _report_progress(self, downloaded: int, total: int, filename: str) -> None:
@@ -1157,7 +1185,16 @@ class MainWindow(QMainWindow):
         layout.addLayout(action_bar)
 
         self.voice_favorite = QCheckBox("Ajouter chaque génération aux favoris")
-        self.voice_favorite.setChecked(True)
+        # Off by default: adding to the soundboard is a decision, not a
+        # side effect of generating. The choice is remembered.
+        self.voice_favorite.setChecked(
+            self._preference_bool("voice_autofavorite", False)
+        )
+        self.voice_favorite.toggled.connect(
+            lambda value: self.library.set_preference(
+                "voice_autofavorite", str(bool(value)).lower()
+            )
+        )
         layout.addWidget(self.voice_favorite)
 
         self.voice_progress = QProgressBar()
@@ -1225,16 +1262,48 @@ class MainWindow(QMainWindow):
         advanced_form.setHorizontalSpacing(12)
         advanced_form.setVerticalSpacing(8)
         self.voice_engine = WheelScrollComboBox()
-        self.voice_engine.addItem("Qwen3-TTS 1.7B — qualité maximale (recommandé)", "qwen3-tts")
-        self.voice_engine.addItem("Qwen3-TTS 0.6B — léger et rapide (~1.2 Go)", "qwen3-tts-0.6b")
-        self.voice_engine.addItem("Pocket TTS — rapide, sans GPU", "pocket-tts")
-        self.voice_engine.addItem("OmniVoice — multilingue", "omnivoice")
-        self.voice_engine.addItem("F5-TTS — expressif & émotions textuelles", "f5-tts")
+        # An engine whose package is absent from this build must not look
+        # selectable: picking it used to fail only at generation time with
+        # "Le runtime … manque".
+        for label, key, module in (
+            ("Qwen3-TTS 1.7B — qualité maximale", "qwen3-tts", "qwen_tts"),
+            ("Qwen3-TTS 0.6B — léger et rapide (~1.2 Go)", "qwen3-tts-0.6b", "qwen_tts"),
+            ("Pocket TTS — rapide, sans GPU", "pocket-tts", "pocket_tts"),
+            ("OmniVoice — multilingue", "omnivoice", "omnivoice"),
+            ("F5-TTS — expressif & émotions textuelles", "f5-tts", "f5_tts"),
+        ):
+            installed = _module_available(module)
+            self.voice_engine.addItem(
+                label if installed else f"{label} — non installé", key
+            )
+            if not installed:
+                index = self.voice_engine.count() - 1
+                self.voice_engine.setItemData(
+                    index,
+                    "Ce moteur n’est pas fourni dans cette installation.",
+                    Qt.ItemDataRole.ToolTipRole,
+                )
+                model_item = self.voice_engine.model().item(index)
+                if model_item is not None:
+                    model_item.setEnabled(False)
         self.voice_engine.setToolTip(
             "Choisissez le moteur vocal. F5-TTS permet de contrôler les émotions par des balises [sad], [happy], etc."
         )
         default_engine = self.library.preference("default_voice_engine", "pocket-tts")
         default_idx = self.voice_engine.findData(default_engine)
+        if default_idx < 0 or not _module_available(
+            {"qwen3-tts": "qwen_tts", "qwen3-tts-0.6b": "qwen_tts", "pocket-tts": "pocket_tts",
+             "omnivoice": "omnivoice", "f5-tts": "f5_tts"}.get(default_engine, "")
+        ):
+            # Land on something that can actually run rather than on a dead entry.
+            default_idx = next(
+                (
+                    index
+                    for index in range(self.voice_engine.count())
+                    if not str(self.voice_engine.itemText(index)).endswith("non installé")
+                ),
+                max(0, default_idx),
+            )
         if default_idx >= 0:
             self.voice_engine.setCurrentIndex(default_idx)
         self.voice_engine.currentIndexChanged.connect(self._voice_engine_changed)
@@ -1299,7 +1368,17 @@ class MainWindow(QMainWindow):
         self.voice_speed = QDoubleSpinBox()
         self.voice_speed.setRange(0.5, 2.0)
         self.voice_speed.setSingleStep(0.05)
-        self.voice_speed.setValue(1.0)
+        self.voice_speed.setValue(
+            float(self.library.preference("voice_speed", str(DEFAULT_CLONE_SPEED)))
+        )
+        self.voice_speed.setToolTip(
+            "Les moteurs de clonage parlent plus vite que la voix imitée "
+            f"(médiane mesurée : +59 %). {DEFAULT_CLONE_SPEED} ralentit la diction "
+            "sans modifier la hauteur de la voix."
+        )
+        self.voice_speed.valueChanged.connect(
+            lambda value: self.library.set_preference("voice_speed", f"{value:.2f}")
+        )
         advanced_form.addWidget(QLabel("Vitesse"), 7, 0)
         advanced_form.addWidget(self.voice_speed, 7, 1)
         self.voice_top_p = QDoubleSpinBox()
@@ -1348,7 +1427,38 @@ class MainWindow(QMainWindow):
         self.voice_search.textChanged.connect(self._refresh_voice_history)
         header.addWidget(self.voice_search)
         layout.addLayout(header)
-        hint = QLabel("Double-cliquez sur une ligne pour la réécouter dans le lecteur ci-dessus.")
+
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+        profile_label = QLabel("Voix :")
+        profile_label.setObjectName("muted")
+        filter_row.addWidget(profile_label)
+        self.voice_history_profile = WheelScrollComboBox()
+        self.voice_history_profile.setMaximumWidth(260)
+        self.voice_history_profile.currentIndexChanged.connect(
+            lambda _index: self._refresh_voice_history()
+        )
+        filter_row.addWidget(self.voice_history_profile)
+        filter_row.addStretch(1)
+        self.voice_history_delete = QPushButton("Supprimer")
+        self.voice_history_delete.setObjectName("compactButton")
+        self.voice_history_delete.setToolTip(
+            "Supprimer la génération sélectionnée et son fichier audio"
+        )
+        self.voice_history_delete.setEnabled(False)
+        self.voice_history_delete.clicked.connect(self._delete_selected_generation)
+        filter_row.addWidget(self.voice_history_delete)
+        self.voice_history_clear = QPushButton("Tout effacer")
+        self.voice_history_clear.setObjectName("compactButton")
+        self.voice_history_clear.setToolTip("Vider l’historique et supprimer les audios")
+        self.voice_history_clear.clicked.connect(self._clear_generation_history)
+        filter_row.addWidget(self.voice_history_clear)
+        layout.addLayout(filter_row)
+
+        hint = QLabel(
+            "Double-cliquez sur une ligne pour la réécouter. Suppr. supprime la "
+            "génération sélectionnée."
+        )
         hint.setObjectName("muted")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -1359,6 +1469,14 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         self.voice_history.itemDoubleClicked.connect(self._play_history_item)
+        self.voice_history.itemSelectionChanged.connect(
+            lambda: self.voice_history_delete.setEnabled(
+                self.voice_history.currentItem() is not None
+            )
+        )
+        delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self.voice_history)
+        delete_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        delete_shortcut.activated.connect(self._delete_selected_generation)
         layout.addWidget(self.voice_history)
         return card
 
@@ -2381,21 +2499,118 @@ class MainWindow(QMainWindow):
         self._relayout_voice_controls()
         self._relayout_responsive_grids()
 
+    ALL_PROFILES = "Toutes les voix"
+
+    @staticmethod
+    def _history_label(generation) -> str:
+        """Name a generation by what it says, not by its timestamped filename."""
+
+        spoken = " ".join(str(generation.text).split())
+        if len(spoken) > 70:
+            spoken = spoken[:69].rstrip() + "…"
+        spoken = spoken or generation.title
+        voice = generation.profile_name or "voix non enregistrée"
+        return f"« {spoken} » · {voice} · {str(generation.created_at)[:16]}"
+
     def _refresh_voice_history(self) -> None:
         if not hasattr(self, "voice_history"):
             return
+        self._sync_history_profile_filter()
+        selected_profile = ""
+        if hasattr(self, "voice_history_profile"):
+            data = self.voice_history_profile.currentData()
+            selected_profile = "" if data in (None, self.ALL_PROFILES) else str(data)
         self.voice_history.clear()
         query = self.voice_search.text() if hasattr(self, "voice_search") else ""
-        for generation in self.library.voice_generations(query):
-            item = QListWidgetItem(
-                f"{generation.title} · {generation.created_at} · {generation.model}"
-            )
+        for generation in self.library.voice_generations(query, selected_profile):
+            item = QListWidgetItem(self._history_label(generation))
             item.setToolTip(
-                f"Texte : {generation.text}\nSortie : {generation.output_path}\n"
+                f"Texte : {generation.text}\n"
+                f"Voix : {generation.profile_name or 'non enregistrée'}\n"
+                f"Moteur : {generation.model}\n"
+                f"Sortie : {generation.output_path}\n"
                 "Double-cliquez pour réécouter."
             )
             item.setData(Qt.ItemDataRole.UserRole, generation.output_path)
+            item.setData(Qt.ItemDataRole.UserRole + 1, generation.id)
             self.voice_history.addItem(item)
+        if hasattr(self, "voice_history_delete"):
+            self.voice_history_delete.setEnabled(False)
+
+    def _sync_history_profile_filter(self) -> None:
+        """Keep the voice filter in step with the voices present in history."""
+
+        if not hasattr(self, "voice_history_profile"):
+            return
+        wanted = [self.ALL_PROFILES, *self.library.voice_generation_profiles()]
+        existing = [
+            self.voice_history_profile.itemData(index)
+            for index in range(self.voice_history_profile.count())
+        ]
+        if existing == wanted:
+            return
+        current = self.voice_history_profile.currentData()
+        self.voice_history_profile.blockSignals(True)
+        self.voice_history_profile.clear()
+        for name in wanted:
+            self.voice_history_profile.addItem(name, name)
+        self.voice_history_profile.setCurrentIndex(
+            max(0, self.voice_history_profile.findData(current))
+        )
+        self.voice_history_profile.blockSignals(False)
+
+    def _selected_generation_id(self) -> int | None:
+        item = self.voice_history.currentItem() if hasattr(self, "voice_history") else None
+        if item is None:
+            return None
+        stored = item.data(Qt.ItemDataRole.UserRole + 1)
+        return int(stored) if stored is not None else None
+
+    def _discard_generated_file(self, path: Path | None) -> None:
+        """Delete a generated audio file and drop any favorite pointing at it."""
+
+        if path is None:
+            return
+        for sound in self.library.sounds():
+            if Path(sound.path) == path:
+                self.library.delete_sound(sound.id)
+        if self._last_generation_path == path:
+            self.voice_result_player.set_source(None)
+            self._last_generation_path = None
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def _delete_selected_generation(self) -> None:
+        generation_id = self._selected_generation_id()
+        if generation_id is None:
+            return
+        if QMessageBox.question(
+            self,
+            "Supprimer cette génération ?",
+            "Supprimer définitivement cette génération et son fichier audio ?",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self._discard_generated_file(self.library.delete_voice_generation(generation_id))
+        self._refresh_voice_history()
+        self._refresh_dashboard()
+        self.statusBar().showMessage("Génération supprimée", 4000)
+
+    def _clear_generation_history(self) -> None:
+        if not self.library.voice_generations():
+            return
+        if QMessageBox.question(
+            self,
+            "Vider l’historique ?",
+            "Supprimer définitivement toutes les générations et leurs fichiers audio ?",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        for path in self.library.clear_voice_generations():
+            self._discard_generated_file(path)
+        self._refresh_voice_history()
+        self._refresh_dashboard()
+        self.statusBar().showMessage("Historique vidé", 4000)
 
     def _play_history_item(self, item: QListWidgetItem) -> None:
         """Replay a past generation in the result player."""
@@ -2590,10 +2805,11 @@ class MainWindow(QMainWindow):
             return
 
         # Instant low-latency playback via FastAudioEngine (< 2 ms)
-        if Path(path).is_file():
-            if self._fast_audio.play(path, virtual):
-                self.statusBar().showMessage("Lecture vers la sortie 2" if virtual else "Lecture locale", 3000)
-                return
+        if Path(path).is_file() and self._fast_audio.play(path, virtual):
+            self.statusBar().showMessage(
+                "Lecture vers la sortie 2" if virtual else "Lecture locale", 3000
+            )
+            return
 
         # Fallback to Qt QMediaPlayer
         preloaded = self._favorite_players.get(path_str + (":v" if virtual else ":h"))
@@ -3688,6 +3904,8 @@ class MainWindow(QMainWindow):
             path,
             engine_key,
             duration_seconds=duration_seconds,
+            # Recorded so the history can say which voice spoke, and filter on it.
+            profile_name=self.voice_profile_name.text().strip(),
         )
         if self.voice_favorite.isChecked():
             self._add_sound_to_favorites(path, generation.title, engine_key)

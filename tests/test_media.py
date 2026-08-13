@@ -104,3 +104,70 @@ def test_extract_audio_reports_video_without_audio_track(tmp_path: Path) -> None
 def test_extract_audio_missing_source_raises(tmp_path: Path) -> None:
     with pytest.raises(VideoAudioExtractionError):
         extract_audio_from_video(tmp_path / "nope.mp4", tmp_path / "out.wav")
+
+
+def _make_video(path, rate: int, layout: str):
+    """Encode an MP4 whose audio track is a 440 Hz tone at ``rate``."""
+
+    from fractions import Fraction
+
+    import av
+    import numpy as np
+
+    channels = 2 if layout == "stereo" else 1
+    container = av.open(str(path), mode="w")
+    stream = container.add_stream("aac", rate=rate)
+    stream.layout = layout
+    total, block, written = int(rate * 2.0), 1024, 0
+    while written < total:
+        count = min(block, total - written)
+        t = (np.arange(written, written + count) / rate).astype(np.float32)
+        tone = (0.5 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+        planes = np.stack([tone] * channels) if channels > 1 else tone[None, :]
+        frame = av.AudioFrame.from_ndarray(
+            np.ascontiguousarray(planes), format="fltp", layout=layout
+        )
+        frame.rate, frame.pts, frame.time_base = rate, written, Fraction(1, rate)
+        for packet in stream.encode(frame):
+            container.mux(packet)
+        written += count
+    for packet in stream.encode(None):
+        container.mux(packet)
+    container.close()
+    return path
+
+
+@pytest.mark.parametrize(
+    ("rate", "layout"),
+    [(48_000, "stereo"), (44_100, "stereo"), (24_000, "mono"), (16_000, "mono")],
+)
+def test_extraction_preserves_duration_and_pitch(tmp_path, rate: int, layout: str) -> None:
+    """Regression: the audio was never resampled, only relabelled.
+
+    A 48 kHz video — every phone and screen recording — came out twice as long
+    and an octave too low because the samples were written unchanged under a
+    24 kHz header.
+    """
+
+    pytest.importorskip("av")
+    import wave
+
+    import numpy as np
+
+    from soundmaster.core.media import TARGET_SAMPLE_RATE, extract_audio_from_video
+
+    source = _make_video(tmp_path / f"in_{rate}_{layout}.mp4", rate, layout)
+    output = extract_audio_from_video(source, tmp_path / "out.wav")
+
+    with wave.open(str(output), "rb") as handle:
+        assert handle.getframerate() == TARGET_SAMPLE_RATE
+        assert handle.getnchannels() == 1
+        data = np.frombuffer(handle.readframes(handle.getnframes()), dtype=np.int16)
+
+    duration = data.size / TARGET_SAMPLE_RATE
+    assert abs(duration - 2.0) < 0.25, f"durée {duration:.2f}s au lieu de 2.0s"
+
+    size = 1 << int(np.log2(data.size))
+    spectrum = np.abs(np.fft.rfft(data[:size].astype(np.float64) * np.hanning(size)))
+    dominant = np.fft.rfftfreq(size, 1 / TARGET_SAMPLE_RATE)[int(np.argmax(spectrum))]
+    assert abs(dominant - 440.0) < 25, f"ton {dominant:.0f} Hz au lieu de 440 Hz"

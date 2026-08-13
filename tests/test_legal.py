@@ -37,7 +37,9 @@ def test_new_profile_is_prefilled_for_the_end_user_but_not_commercially_ready() 
     assert profile.publisher.legal_name == "SoundMaster — projet open source"
     assert profile.publisher.support_url == "https://github.com/TeALO36/SoundMaster/issues"
     assert profile.publisher.address != ""
-    assert "@" in profile.publisher.contact_email
+    # No personal mailbox may ship inside the application: the public contact
+    # channel is the project issue tracker.
+    assert profile.publisher.contact_email == ""
     assert profile.documents.qwen_model_id == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     assert profile.documents.qwen_notice_reference != ""
     # The upstream revision is filled from the published repository snapshot.
@@ -122,3 +124,69 @@ def test_myinstants_rights_are_required_only_when_enabled() -> None:
 
     assert ready is False
     assert "Référence manquante : Droits commerciaux Myinstants" in reasons
+
+
+def test_no_personal_contact_address_is_shipped() -> None:
+    """Regression: v0.8.9 shipped a maintainer's private e-mail as a default."""
+
+    from dataclasses import fields
+
+    from soundmaster.core.legal import WITHDRAWN_CONTACT_EMAILS, LegalProfile
+
+    profile = LegalProfile()
+    for section in (profile.publisher, profile.documents):
+        for field in fields(section):
+            value = str(getattr(section, field.name)).lower()
+            assert "@" not in value or value.startswith("http"), (
+                f"{field.name} contient une adresse personnelle : {value}"
+            )
+            for withdrawn in WITHDRAWN_CONTACT_EMAILS:
+                assert withdrawn not in value
+
+
+def test_a_previously_saved_personal_address_is_removed_from_disk(tmp_path) -> None:
+    """Dropping the default is not enough: it is already on existing installs."""
+
+    import json
+
+    from soundmaster.core.legal import load_legal_profile
+
+    path = tmp_path / "legal_profile.json"
+    path.write_text(
+        json.dumps({"publisher": {"contact_email": "teanokry@gmail.com", "country": "France"}}),
+        encoding="utf-8",
+    )
+
+    profile = load_legal_profile(path)
+
+    assert profile.publisher.contact_email == ""
+    # And the file itself no longer carries it.
+    assert "teanokry" not in path.read_text(encoding="utf-8")
+
+
+def test_scrubbing_leaves_a_publisher_supplied_address_alone(tmp_path) -> None:
+    """Only the withdrawn default is removed, not a real publisher's contact."""
+
+    import json
+
+    from soundmaster.core.legal import load_legal_profile
+
+    path = tmp_path / "legal_profile.json"
+    path.write_text(
+        json.dumps({"publisher": {"contact_email": "legal@societe.example", "country": "France"}}),
+        encoding="utf-8",
+    )
+
+    assert load_legal_profile(path).publisher.contact_email == "legal@societe.example"
+
+
+def test_a_contact_channel_can_be_a_url_instead_of_a_mailbox() -> None:
+    """The readiness gate must not force a personal e-mail to be published."""
+
+    from soundmaster.core.legal import LegalProfile
+
+    profile = LegalProfile()
+    assert profile.publisher.contact_email == ""
+    assert profile.publisher.support_url
+    reasons = profile.validation_errors()
+    assert not any("contact" in reason.lower() for reason in reasons), reasons

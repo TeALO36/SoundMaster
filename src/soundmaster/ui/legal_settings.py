@@ -19,7 +19,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -28,11 +27,17 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from soundmaster.core.legal import LegalProfile, save_legal_profile
+from soundmaster.core.legal import LegalProfile
 
 
 class LegalSettingsWidget(QWidget):
-    """Editable publisher profile, privacy defaults, and release checklist."""
+    """Read-only view of the publisher profile, privacy defaults and checklist.
+
+    This page describes decisions made by the *publisher* of the application,
+    not preferences of the person using it. Letting an end user edit it would
+    let them rewrite the legal statements the build ships with, so every field
+    is displayed and selectable but never editable.
+    """
 
     saved = pyqtSignal()
 
@@ -43,8 +48,8 @@ class LegalSettingsWidget(QWidget):
         ("country", "Pays *"),
         ("registration_number", "SIREN / registre"),
         ("vat_number", "N° TVA intracommunautaire"),
-        ("contact_email", "E-mail légal / support *"),
-        ("support_url", "URL du support"),
+        ("contact_email", "E-mail légal (facultatif)"),
+        ("support_url", "Canal de contact *"),
         ("hosting_provider", "Hébergeur du site / service"),
     )
     _DOCUMENT_FIELDS: tuple[tuple[str, str], ...] = (
@@ -103,13 +108,15 @@ class LegalSettingsWidget(QWidget):
         root = QVBoxLayout(self)
         intro = QLabel(
             "<h2>Conformité & commercialisation</h2>"
-            "<p>Cette page est destinée à l’<b>éditeur</b> du logiciel, pas à l’utilisateur final. "
-            "SoundMaster étant un projet open source, elle est <b>déjà pré-remplie</b> avec "
-            "l’identité du projet, son e-mail de contact, son dépôt GitHub et les licences des "
-            "modèles (Pocket TTS, Qwen3-TTS, OmniVoice, F5-TTS). <b>Rien n’est à remplir pour "
-            "utiliser l’application.</b> Seules les étapes de revue juridique et l’empreinte du "
-            "build distribué restent à valider par l’éditeur avant une éventuelle commercialisation. "
-            "Cette page ne constitue pas une certification juridique.</p>"
+            "<p>Cette page est <b>informative et en lecture seule</b>. Elle décrit les "
+            "engagements de l’<b>éditeur</b> du logiciel et ne se modifie pas depuis "
+            "l’application : rien n’est à remplir pour s’en servir.</p>"
+            "<p><b>Vos données restent chez vous.</b> SoundMaster fonctionne entièrement en "
+            "local : aucun compte, aucune télémétrie, aucun envoi de vos échantillons, de vos "
+            "textes ou de vos audios générés. Rien n’est collecté ni conservé par l’éditeur. "
+            "Les seuls accès réseau sont ceux que vous déclenchez : téléchargement des modèles, "
+            "recherche Myinstants et vérification des mises à jour.</p>"
+            "<p>Cette page ne constitue pas une certification juridique.</p>"
         )
         intro.setWordWrap(True)
         root.addWidget(intro)
@@ -146,21 +153,20 @@ class LegalSettingsWidget(QWidget):
         self.section_tabs = tabs
         root.addWidget(tabs, 1)
 
-        actions = QHBoxLayout()
-        self.save_button = QPushButton("Enregistrer la configuration")
-        self.save_button.clicked.connect(self._save)
-        actions.addWidget(self.save_button)
-        actions.addStretch(1)
-        root.addLayout(actions)
+        footer = QLabel(
+            "Ces informations sont fixées par l’éditeur et livrées avec l’application. "
+            "Elles ne peuvent pas être modifiées ici."
+        )
+        footer.setObjectName("muted")
+        footer.setWordWrap(True)
+        root.addWidget(footer)
 
     def _publisher_group(self) -> QGroupBox:
         group = QGroupBox("1. Identité de l’éditeur")
         form = QFormLayout(group)
         for attribute, label in self._PUBLISHER_FIELDS:
             field = QLineEdit(str(getattr(self.profile.publisher, attribute)))
-            field.setPlaceholderText(
-                "Ex. SoundMaster SAS — remplacez par les informations officielles"
-            )
+            self._make_read_only(field, "Non renseigné")
             self._publisher_inputs[attribute] = field
             form.addRow(label, field)
         return group
@@ -177,26 +183,12 @@ class LegalSettingsWidget(QWidget):
         form = QFormLayout()
         for attribute, label in self._DOCUMENT_FIELDS:
             field = QLineEdit(str(getattr(self.profile.documents, attribute)))
-            placeholder = (
-                "À remplacer par la référence exacte vérifiée"
-                if attribute in {
-                    "qwen_license_reference",
-                    "qwen_notice_reference",
-                    "qwen_model_revision",
-                    "qwen_model_sha256",
-                    "third_party_audio_rights_reference",
-                }
-                else "https://… ou chemin local vers le document exact"
-            )
-            field.setPlaceholderText(placeholder)
+            self._make_read_only(field, "Non renseigné")
             self._document_inputs[attribute] = field
             row = QHBoxLayout()
             row.addWidget(field, 1)
             open_button = QPushButton("Ouvrir")
             open_button.setEnabled(bool(field.text().strip()))
-            field.textChanged.connect(
-                lambda text, button=open_button: button.setEnabled(bool(text.strip()))
-            )
             open_button.clicked.connect(
                 lambda _checked=False, current_field=field: self._open_url(current_field.text().strip())
             )
@@ -208,7 +200,7 @@ class LegalSettingsWidget(QWidget):
             "Myinstants est activé dans cette édition (droits commerciaux écrits obligatoires)"
         )
         self.myinstants_enabled.setChecked(self.profile.myinstants_enabled)
-        self.myinstants_enabled.toggled.connect(lambda _checked: self._refresh_status())
+        self._make_indicator(self.myinstants_enabled)
         layout.addWidget(self.myinstants_enabled)
         return group
 
@@ -217,21 +209,30 @@ class LegalSettingsWidget(QWidget):
         layout = QVBoxLayout(group)
         privacy = self.profile.privacy
 
-        self.local_only = QCheckBox("Traitement local uniquement (recommandé)")
-        self.local_only.setChecked(privacy.local_processing_only)
-        self.local_only.setToolTip("Aucun échantillon vocal ni prompt n’est envoyé par défaut.")
-        self.local_only.toggled.connect(lambda _checked: self._refresh_status())
+        summary = QLabel(
+            "Aucune donnée n’est collectée ni transmise : tout le traitement a lieu sur "
+            "votre ordinateur. Les durées ci-dessous concernent uniquement les fichiers "
+            "conservés <b>localement</b>, que vous pouvez supprimer à tout moment."
+        )
+        summary.setWordWrap(True)
+        summary.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(summary)
 
+        self.local_only = QCheckBox("Traitement local uniquement")
+        self.local_only.setChecked(privacy.local_processing_only)
+        self._make_indicator(self.local_only)
         layout.addWidget(self.local_only)
 
-        self.telemetry = QCheckBox("Autoriser la télémétrie (désactivée par défaut)")
+        self.telemetry = QCheckBox("Télémétrie (aucune n’est collectée)")
         self.telemetry.setChecked(privacy.telemetry_enabled_by_default)
+        self._make_indicator(self.telemetry)
         layout.addWidget(self.telemetry)
 
         self.model_improvement = QCheckBox(
-            "Autoriser l’utilisation de données utilisateur pour améliorer le modèle"
+            "Utilisation de données utilisateur pour améliorer le modèle"
         )
         self.model_improvement.setChecked(privacy.allow_model_improvement_from_user_data)
+        self._make_indicator(self.model_improvement)
         layout.addWidget(self.model_improvement)
 
         form = QFormLayout()
@@ -239,13 +240,15 @@ class LegalSettingsWidget(QWidget):
         self.voice_retention.setRange(0, 3650)
         self.voice_retention.setSuffix(" jours")
         self.voice_retention.setValue(privacy.voice_samples_retention_days)
-        form.addRow("Conservation des échantillons vocaux", self.voice_retention)
+        self._make_read_only_number(self.voice_retention)
+        form.addRow("Conservation locale des échantillons vocaux", self.voice_retention)
 
         self.audio_retention = QSpinBox()
         self.audio_retention.setRange(0, 3650)
         self.audio_retention.setSuffix(" jours")
         self.audio_retention.setValue(privacy.generated_audio_retention_days)
-        form.addRow("Conservation des audios générés", self.audio_retention)
+        self._make_read_only_number(self.audio_retention)
+        form.addRow("Conservation locale des audios générés", self.audio_retention)
         layout.addLayout(form)
         return group
 
@@ -253,21 +256,20 @@ class LegalSettingsWidget(QWidget):
         group = QGroupBox("4. Checklist de mise sur le marché")
         layout = QVBoxLayout(group)
         warning = QLabel(
-            "Ne cochez une ligne qu’après avoir vérifié les pièces correspondantes. "
-            "Ces cases sont une déclaration de l’éditeur, pas une preuve automatique. "
-            "L’application bloque volontairement l’état « prêt à commercialiser » tant qu’une "
-            "ligne manque."
+            "Ces cases sont une déclaration de l’éditeur, pas une preuve automatique, et "
+            "s’affichent en lecture seule. L’application bloque volontairement l’état "
+            "« prêt à commercialiser » tant qu’une ligne manque."
         )
         warning.setWordWrap(True)
         layout.addWidget(warning)
         self._reviewer_reference.setText(self.profile.reviewer_reference)
-        self._reviewer_reference.setPlaceholderText("Référence du dossier, cabinet ou responsable interne")
+        self._make_read_only(self._reviewer_reference, "Revue juridique externe non effectuée")
         layout.addWidget(QLabel("Référence de la revue juridique externe *"))
         layout.addWidget(self._reviewer_reference)
         for attribute, label in self._CHECK_FIELDS:
             checkbox = QCheckBox(label)
             checkbox.setChecked(bool(getattr(self.profile.checks, attribute)))
-            checkbox.toggled.connect(lambda _checked: self._refresh_status())
+            self._make_indicator(checkbox)
             self._check_inputs[attribute] = checkbox
             layout.addWidget(checkbox)
         return group
@@ -287,23 +289,30 @@ class LegalSettingsWidget(QWidget):
         layout.addWidget(notes)
         return group
 
-    def _profile_from_ui(self) -> None:
-        for attribute, field in self._publisher_inputs.items():
-            setattr(self.profile.publisher, attribute, field.text().strip())
-        for attribute, field in self._document_inputs.items():
-            setattr(self.profile.documents, attribute, field.text().strip())
-        for attribute, checkbox in self._check_inputs.items():
-            setattr(self.profile.checks, attribute, checkbox.isChecked())
-        self.profile.myinstants_enabled = self.myinstants_enabled.isChecked()
-        self.profile.reviewer_reference = self._reviewer_reference.text().strip()
-        self.profile.privacy.local_processing_only = self.local_only.isChecked()
-        self.profile.privacy.telemetry_enabled_by_default = self.telemetry.isChecked()
-        self.profile.privacy.allow_model_improvement_from_user_data = self.model_improvement.isChecked()
-        self.profile.privacy.voice_samples_retention_days = self.voice_retention.value()
-        self.profile.privacy.generated_audio_retention_days = self.audio_retention.value()
+    @staticmethod
+    def _make_read_only(field: QLineEdit, empty_text: str) -> None:
+        """Show a value that can be read and copied, but never edited."""
+
+        field.setReadOnly(True)
+        field.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        field.setPlaceholderText(empty_text)
+        field.setObjectName("readOnlyField")
+
+    @staticmethod
+    def _make_indicator(checkbox: QCheckBox) -> None:
+        """Turn a checkbox into a state indicator the user cannot toggle."""
+
+        checkbox.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        checkbox.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+    @staticmethod
+    def _make_read_only_number(spin: QSpinBox) -> None:
+        spin.setReadOnly(True)
+        spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        spin.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
     def _refresh_status(self) -> None:
-        self._profile_from_ui() if self._publisher_inputs else None
+        # The widgets only display the profile, so nothing is ever written back.
         ready, reasons = self.profile.commercial_readiness()
         if ready:
             self.status_label.setText(
@@ -319,23 +328,6 @@ class LegalSettingsWidget(QWidget):
                 + "; ".join(displayed)
                 + suffix
             )
-
-    def _save(self) -> None:
-        self._profile_from_ui()
-        self.profile.mark_reviewed(self._reviewer_reference.text())
-        try:
-            save_legal_profile(self.profile_path, self.profile)
-        except OSError as error:
-            QMessageBox.critical(self, "Enregistrement impossible", str(error))
-            return
-        self._refresh_status()
-        self.saved.emit()
-        QMessageBox.information(
-            self,
-            "Configuration enregistrée",
-            "La configuration de conformité a été enregistrée localement. "
-            "Elle ne constitue pas une certification juridique.",
-        )
 
     @staticmethod
     def _open_reference(reference: str) -> None:

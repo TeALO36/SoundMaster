@@ -1262,6 +1262,16 @@ def test_engine_fallback_uses_the_first_installed_alternative(
         "soundmaster.ui.main_window.QMessageBox.warning",
         lambda *args: QMessageBox.StandardButton.Ok,
     )
+    # What is under test is the engine choice, not generation. Left real, the
+    # worker loads the actual model on a machine where it is installed, and
+    # QThread.quit() cannot interrupt that blocking load — the thread outlived
+    # the test and crashed the interpreter at teardown.
+    from soundmaster.core.tts import VoiceGenerationError
+
+    def refuse(*_args, **_kwargs):
+        raise VoiceGenerationError("moteur neutralisé pour le test")
+
+    monkeypatch.setattr(window._voice_service, "generate_clone", refuse)
 
     # Force the combo onto qwen3-tts (a runtime that exists in this scenario),
     # then remove it from the installed set: only pocket-tts remains usable.
@@ -1648,5 +1658,115 @@ def test_stop_sound_stops_the_fast_engine_too(qapp: QApplication, tmp_path: Path
     assert window._active_preview_sound_id is None
 
     monkeypatch.undo()
+    window._allow_close = True
+    window.close()
+
+
+def test_only_one_shortcut_button_holds_the_keyboard(qapp: QApplication) -> None:
+    """Regression: a leftover grab made capture need a second click.
+
+    Qt allows exactly one keyboard grab. When a first row kept it, the next
+    button received nothing, so the shortcut only registered on a later click.
+    """
+
+    first = ShortcutCaptureButton()
+    second = ShortcutCaptureButton()
+
+    first.start_recording()
+    assert first.recording is True
+
+    # Starting another capture must take the keyboard away from the first.
+    second.start_recording()
+    assert second.recording is True
+    assert first.recording is False, "l'ancien bouton doit relâcher le clavier"
+    assert ShortcutCaptureButton._active_capture is second
+
+    # Re-pressing the active button must not grab twice.
+    second.start_recording()
+    assert second.recording is True
+
+    captured: list[str] = []
+    second.shortcut_recorded.connect(captured.append)
+    second.keyPressEvent(
+        QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_5, Qt.KeyboardModifier.ControlModifier)
+    )
+    assert captured == ["ctrl+5"]
+    assert second.recording is False
+    assert ShortcutCaptureButton._active_capture is None
+
+    # A row that disappears while recording must release the keyboard rather
+    # than stranding the grab on a widget the user can no longer see.
+    first.show()
+    qapp.processEvents()
+    first.start_recording()
+    assert ShortcutCaptureButton._active_capture is first
+    first.hide()
+    qapp.processEvents()
+    assert first.recording is False
+    assert ShortcutCaptureButton._active_capture is None
+
+
+def test_history_shows_the_spoken_text_and_the_voice(qapp: QApplication, tmp_path: Path) -> None:
+    window = _unlocked_window(tmp_path)
+    sample = tmp_path / "s.wav"
+    sample.write_bytes(b"RIFF")
+    generated = tmp_path / "g.wav"
+    generated.write_bytes(b"RIFF")
+    window.library.add_voice_generation(
+        "voice-20260813-131748",
+        "Salut tout le monde, la partie commence",
+        sample,
+        generated,
+        "pocket-tts",
+        profile_name="Discord",
+    )
+    window._refresh_voice_history()
+
+    assert window.voice_history.count() == 1
+    label = window.voice_history.item(0).text()
+    # The timestamped filename told the user nothing; the sentence does.
+    assert "Salut tout le monde" in label
+    assert "Discord" in label
+    assert "voice-20260813" not in label
+
+    # The voice filter offers the voices actually present.
+    options = [
+        window.voice_history_profile.itemData(i)
+        for i in range(window.voice_history_profile.count())
+    ]
+    assert options == [MainWindow.ALL_PROFILES, "Discord"]
+
+    window._allow_close = True
+    window.close()
+
+
+def test_history_entries_can_be_deleted_with_their_audio(
+    qapp: QApplication, tmp_path: Path, monkeypatch
+) -> None:
+    from PyQt6.QtWidgets import QMessageBox
+
+    window = _unlocked_window(tmp_path)
+    sample = tmp_path / "s.wav"
+    sample.write_bytes(b"RIFF")
+    generated = tmp_path / "g.wav"
+    generated.write_bytes(b"RIFF")
+    window.library.add_voice_generation(
+        "g", "Phrase", sample, generated, "pocket-tts", profile_name="Jeu"
+    )
+    window._add_sound_to_favorites(generated, "g", "pocket-tts")
+    window._refresh_voice_history()
+    window.voice_history.setCurrentRow(0)
+
+    monkeypatch.setattr(
+        QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
+    )
+    window._delete_selected_generation()
+
+    assert window.library.voice_generations() == []
+    # The audio file and the favorite pointing at it go too.
+    assert not generated.exists()
+    assert window.library.sounds() == []
+    assert window.voice_history.count() == 0
+
     window._allow_close = True
     window.close()

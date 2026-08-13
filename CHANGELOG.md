@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.9.3 — 2026-08-13
+
+### Fixed
+
+- **Video import produced half-speed audio.** The extraction claimed to resample to 24 kHz but only relabelled the header, so a 48 kHz source — every phone and screen recording — came out twice as long and an octave too low, and packed stereo was read as interleaved noise. FFmpeg now performs the conversion. Verified on generated MP4s at 48 kHz, 44.1 kHz, 24 kHz and 16 kHz: duration and pitch are preserved in all four.
+- **"Le runtime qwen-tts manque" could not be escaped.** Engine availability was probed with `find_spec`, which reports a module a packaged build cannot actually import, so the automatic fallback never triggered. The probe now performs the real import once and caches it, and engines missing from the build are shown disabled instead of failing after the user picks them.
+- **Shortcut capture needed a second click.** Qt allows one keyboard grab at a time and the previous row never released it, so the next button received nothing. Only one capture is active at a time now, and a row that disappears while recording releases the keyboard.
+- **Generated audio was added to the favorites without being asked.** The option was enabled by default; it is now off, and the choice is remembered.
+
+### Changed — privacy
+
+- A maintainer's personal e-mail address was hardcoded as the default publisher contact and therefore shipped in every build. It is removed, the public contact channel is the project issue tracker, and because the address is already written into `legal_profile.json` on existing installs it is also **scrubbed from disk on load**.
+- The compliance page is now **read-only**: values are shown and can be copied, but nothing can be edited or saved from the application. It states plainly that nothing is collected, transmitted or retained, and that the only network access is what the user triggers.
+
+### Changed — voice fidelity
+
+Ported from measurements made on the VoiceClone project across 72 cloned takes, using the same engines.
+
+- **Octave collapse guard.** The sampler occasionally locks onto half the reference pitch, producing a fluent take in the wrong voice that nothing else detects. Median pitch is now measured by autocorrelation and a take more than 6 semitones from the reference is regenerated. The estimator is verified within a semitone at 98, 147, 205 and 262 Hz, catches the real 205 Hz → 99.7 Hz case, and never fires on the 1–3 semitones of normal take-to-take variation.
+- **Speaking rate.** Cloning defaults to 0.7x. Pocket TTS exposes no tempo control — and the existing speed setting was silently discarded — so the correction is applied after generation with a pitch-preserving overlap-add; a plain resample would have slowed the voice by dropping it an octave.
+
+### Changed — generation history
+
+- Entries are named by what they say instead of a timestamped filename, show which voice produced them, can be filtered by voice, and can be deleted individually or all at once — removing the audio file and any favorite pointing at it. Existing databases are migrated.
+
+### Fixed — startup could freeze on a machine with a NAS mapped
+
+Found while investigating a test that stalled with zero CPU. The drive scan that
+picks another disk when the system drive is full called `exists()` on each drive
+letter *before* asking Windows what kind of drive it was, so a mapped-but-asleep
+network share was probed — blocking for the whole SMB timeout — even though it
+was rejected as a network share on the very next line. The drive type is now
+checked first, which costs nothing and never touches the network.
+
+### Fixed — a test could crash the interpreter
+
+`test_engine_fallback_uses_the_first_installed_alternative` started a real
+generation to check which engine the fallback picked. On a machine where the
+engine is genuinely installed, the worker thread began loading the actual model,
+and `QThread.quit()` cannot interrupt a blocking load: the thread outlived the
+test and brought the interpreter down at teardown. The test now stubs the engine,
+since what it verifies is the choice, not the generation.
+
+### Validation
+
+- Full suite green; ruff and compilation clean, including 12 pre-existing lint findings resolved. One was left deliberately: on a `sqlite3.Row`, `in` tests values rather than keys, so the suggested rewrite would have introduced a bug.
+- All six model repositories reachable, the official VB-CABLE page responds, and the in-app updater resolves the published release.
+- Checked on the running application: favorites off by default, cloning speed 0.7, Pocket TTS selected, engines absent from the build shown disabled, and no contact address in the compliance profile.
+
 ## 0.9.2 — 2026-08-13
 
 ### Fixed
