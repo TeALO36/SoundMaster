@@ -11,7 +11,6 @@ from __future__ import annotations
 import errno
 import gc
 import inspect
-from functools import cache
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -65,31 +64,18 @@ def engine_runtime_present(engine_key: str) -> bool:
     return runtime is not None and _module_available(runtime[0])
 
 
-@cache
 def is_engine_runtime_installed(engine_key: str) -> bool:
-    """Whether the engine can actually be loaded, not merely located.
+    """Whether the engine's runtime is available.
 
-    ``find_spec`` alone is not enough: a packaged build can expose a module
-    whose real import fails, and the engine was then selected only to die later
-    with "Le runtime … manque" instead of falling back to one that works. So the
-    import is performed for real and the symbol the loader uses is checked.
-
-    Only called just before a generation — which imports the engine anyway — and
-    memoised, so the cost is paid once per process at worst. Call
-    ``is_engine_runtime_installed.cache_clear()`` when the environment changes
-    under the process, as tests do.
+    Deliberately a *presence* check, not a real import. Importing an engine to
+    prove it works kills the process outright when the native library is broken:
+    torch raises an illegal instruction (0xc000001d) on a CPU missing the
+    instructions its build targets, which is strictly worse than the "runtime
+    manque" message the import was meant to replace. A runtime that is present
+    but unloadable has to be caught where it is actually loaded, not here.
     """
 
-    if not engine_runtime_present(engine_key):
-        return False
-    module_name, symbol = ENGINE_RUNTIMES[engine_key]
-    try:
-        import importlib
-
-        module = importlib.import_module(module_name)
-    except Exception:  # noqa: BLE001 - a broken runtime is an absent runtime.
-        return False
-    return symbol is None or hasattr(module, symbol)
+    return engine_runtime_present(engine_key)
 
 # Pocket TTS ships one bundle per language inside the same repository and picks
 # it through ``load_model(language=...)``. The bundles are NOT uniform, so this

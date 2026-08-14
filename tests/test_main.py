@@ -118,7 +118,13 @@ def test_auto_selects_another_drive_when_the_system_disk_is_full(
     expected: Path | None = None
     for letter in "DEFGHIJKLMNOPQRSTUVWXYZ":
         root = Path(f"{letter}:\\")
-        if root.exists() and root.anchor != paths.models.anchor and expected is None:
+        try:
+            # Mirror the production guard: a failing drive (empty card reader,
+            # dying disk) raises WinError 1117 instead of answering "no".
+            present = root.exists()
+        except OSError:
+            continue
+        if present and root.anchor != paths.models.anchor and expected is None:
             expected = root / "SoundMaster-models"
 
     assert main_mod._auto_model_directory(paths) == expected
@@ -224,3 +230,28 @@ def test_a_sleeping_network_drive_is_never_probed(monkeypatch, tmp_path) -> None
     paths = _paths(tmp_path)
     assert main_module._auto_model_directory(paths) is None
     assert not any(item.endswith(":\\") for item in touched), touched
+
+
+def test_a_failing_drive_does_not_take_startup_down(monkeypatch, tmp_path) -> None:
+    """A dying disk or empty card reader raises instead of answering "no".
+
+    Observed as WinError 1117 (I/O device error) on a real machine: uncaught,
+    one bad drive letter aborted the whole model-directory selection.
+    """
+
+    import shutil
+
+    from soundmaster import main as main_module
+
+    def exploding_exists(self):
+        raise OSError(1117, "Impossible de satisfaire à la demande")
+
+    monkeypatch.setattr(Path, "exists", exploding_exists)
+    monkeypatch.setattr(main_module, "_is_local_fixed_drive", lambda _root: True)
+    monkeypatch.setattr(
+        shutil, "disk_usage", lambda _p: shutil._ntuple_diskusage(1, 1, 0)
+    )
+
+    paths = _paths(tmp_path)
+    # No candidate can be measured, so the answer is simply "no other drive".
+    assert main_module._auto_model_directory(paths) is None

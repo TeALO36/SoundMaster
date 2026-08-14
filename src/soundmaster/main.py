@@ -81,9 +81,12 @@ def _auto_model_directory(paths: AppPaths) -> Path | None:
         # wait is what froze startup on machines with a NAS mapped.
         if not _is_local_fixed_drive(root):
             continue
-        if not root.exists():
-            continue
         try:
+            # A failing drive does not merely answer "no": an empty card reader
+            # or a dying disk raises (WinError 1117, I/O device error). Left
+            # uncaught, one bad drive letter took the whole startup down.
+            if not root.exists():
+                continue
             candidate_free = shutil.disk_usage(root).free
         except OSError:
             continue

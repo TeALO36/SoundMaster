@@ -46,42 +46,25 @@ def test_engine_runtime_checks_probe_the_real_packages(monkeypatch: pytest.Monke
     assert not engine_runtime_present("unknown-engine")
 
 
-def test_engine_availability_is_confirmed_by_a_real_import(monkeypatch) -> None:
-    """A packaged build can expose a module whose real import fails.
+def test_engine_detection_never_imports_an_engine() -> None:
+    """Detection must not import: a broken native library kills the process.
 
-    ``find_spec`` reported it as installed, the generation fallback therefore
-    never triggered, and the user was left with "Le runtime … manque". The
-    authoritative check imports for real — and, being cached, must be cleared
-    whenever the environment changes underneath it.
+    Probing by real import was tried and crashed the interpreter outright
+    (access violation, then illegal instruction 0xc000001d from torch on a CPU
+    missing the instructions its build targets) — a silent death instead of the
+    "runtime manque" message it was meant to replace.
     """
 
     import sys
-    from types import SimpleNamespace
 
-    from soundmaster.core.tts import is_engine_runtime_installed
+    from soundmaster.core.tts import ENGINE_RUNTIMES, is_engine_runtime_installed
 
-    monkeypatch.setattr("soundmaster.core.tts._module_available", lambda _name: True)
-
-    # Located but unimportable: not installed.
-    monkeypatch.setitem(sys.modules, "omnivoice", None)
-    is_engine_runtime_installed.cache_clear()
-    assert is_engine_runtime_installed("omnivoice") is False
-
-    # Importable but missing the symbol the loader needs: not installed either.
-    monkeypatch.setitem(sys.modules, "omnivoice", SimpleNamespace())
-    is_engine_runtime_installed.cache_clear()
-    assert is_engine_runtime_installed("omnivoice") is False
-
-    monkeypatch.setitem(sys.modules, "omnivoice", SimpleNamespace(OmniVoice=object))
-    is_engine_runtime_installed.cache_clear()
-    assert is_engine_runtime_installed("omnivoice") is True
-
-    # The result is memoised: the probe is not repeated per generation.
-    before = is_engine_runtime_installed.cache_info().misses
-    is_engine_runtime_installed("omnivoice")
-    assert is_engine_runtime_installed.cache_info().misses == before
-
-    is_engine_runtime_installed.cache_clear()
+    for engine_key, (module_name, _symbol) in ENGINE_RUNTIMES.items():
+        before = module_name in sys.modules
+        is_engine_runtime_installed(engine_key)
+        assert (module_name in sys.modules) is before, (
+            f"detecting {engine_key} imported {module_name}"
+        )
 
 
 def test_qwen_language_tokens_are_normalised_to_iso_codes() -> None:
