@@ -97,7 +97,6 @@ from soundmaster.core.tts import (
     POCKET_GATED_HINT,
     QwenVoiceService,
     VoiceGenerationError,
-    engine_runtime_present,
     is_engine_runtime_installed,
     pocket_has_quality_variant,
     pocket_weights_cached,
@@ -1916,7 +1915,7 @@ class MainWindow(QMainWindow):
             # The runtime is bundled with the app; only the weights can be
             # missing, and they are downloaded through the engine itself.
             if (
-                engine_runtime_present("pocket-tts")
+                is_engine_runtime_installed("pocket-tts")
                 and not pocket_weights_cached()
             ):
                 ans = QMessageBox.question(
@@ -2019,7 +2018,7 @@ class MainWindow(QMainWindow):
         once cached, first generation no longer pays the download cost.
         """
 
-        if not engine_runtime_present("pocket-tts"):
+        if not is_engine_runtime_installed("pocket-tts"):
             QMessageBox.warning(
                 self,
                 "Runtime Pocket TTS manquant",
