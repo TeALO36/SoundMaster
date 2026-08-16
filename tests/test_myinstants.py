@@ -172,3 +172,34 @@ def test_cache_audio_enforces_download_limit(monkeypatch: pytest.MonkeyPatch, tm
     with pytest.raises(MyInstantsError, match="25 Mo"):
         cache_audio(result, tmp_path, True)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_myinstant_card_toggles_favorite_state() -> None:
+    from PyQt6.QtWidgets import QApplication
+    from soundmaster.ui.myinstants_widgets import MyInstantCard
+
+    _app = QApplication.instance() or QApplication([])
+
+    result = MyInstantResult(
+        "Airhorn",
+        "https://www.myinstants.com/en/instant/airhorn/",
+        "https://www.myinstants.com/media/sounds/airhorn.mp3",
+    )
+    card = MyInstantCard(result)
+
+    assert "Ajouter" in card.favorite_button.text()
+    assert card._is_favorite is False
+
+    events: list[str] = []
+    card.favorite_requested.connect(lambda _res: events.append("add"))
+    card.remove_favorite_requested.connect(lambda _res: events.append("remove"))
+
+    card.favorite_button.click()
+    assert events == ["add"]
+
+    card.set_is_favorite(True)
+    assert "Supprimer" in card.favorite_button.text()
+    assert card._is_favorite is True
+
+    card.favorite_button.click()
+    assert events == ["add", "remove"]

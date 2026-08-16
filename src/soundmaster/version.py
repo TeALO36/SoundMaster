@@ -3,4 +3,4 @@
 try:
     from soundmaster._build_version import __version__
 except ImportError:
-    __version__ = "0.9.3"
+    __version__ = "0.9.4"

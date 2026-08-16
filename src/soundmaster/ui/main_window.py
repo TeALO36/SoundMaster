@@ -2400,6 +2400,7 @@ class MainWindow(QMainWindow):
         has_recent = bool(self._recent_cards)
         self.recent_header.setVisible(has_recent)
         self.recent_hint.setVisible(has_recent)
+        self._sync_myinstant_cards_favorite_status()
 
     def _rename_sound(self, sound_id: int) -> None:
         """Rename a favorite or a recently used sound in place."""
@@ -4103,6 +4104,35 @@ class MainWindow(QMainWindow):
         thread.finished.connect(self._network_done)
         thread.start()
 
+    def _is_myinstant_favorite(self, result: MyInstantResult) -> SoundItem | None:
+        favorites = self.library.sounds(favorites_only=True)
+        title_clean = result.title.strip().lower()
+        for item in favorites:
+            if item.source == "Myinstants" and item.title.strip().lower() == title_clean:
+                return item
+        return None
+
+    def _sync_myinstant_cards_favorite_status(self) -> None:
+        if not hasattr(self, "_myinstant_cards"):
+            return
+        favorites = {
+            item.title.strip().lower(): item
+            for item in self.library.sounds(favorites_only=True)
+            if item.source == "Myinstants"
+        }
+        for card_url, card in self._myinstant_cards.items():
+            is_fav = card.result.title.strip().lower() in favorites
+            card.set_is_favorite(is_fav)
+
+    def _remove_myinstant_favorite(self, result: MyInstantResult) -> None:
+        item = self._is_myinstant_favorite(result)
+        if item is not None:
+            self.library.delete_sound(item.id)
+            self._refresh_dashboard()
+            self._sync_myinstant_cards_favorite_status()
+            self.statusBar().showMessage(f"« {result.title} » retiré des favoris", 4000)
+            self.myinstants_status.setText(f"« {result.title} » retiré des favoris.")
+
     def _search_finished(self, results: object) -> None:
         self._myinstants_catalog_loaded = True
         self._myinstants_results = list(results)
@@ -4117,12 +4147,14 @@ class MainWindow(QMainWindow):
             card.preview_hovered.connect(self._warm_remote_preview)
             card.preview_requested.connect(lambda selected: self._download_myinstant(selected, False))
             card.favorite_requested.connect(lambda selected: self._download_myinstant(selected, True))
+            card.remove_favorite_requested.connect(self._remove_myinstant_favorite)
             self._myinstant_cards[result.audio_url] = card
         self._reflow_grid(
             self.myinstants_grid,
             list(self._myinstant_cards.values()),
             self._grid_columns(self.myinstants_container.width()),
         )
+        self._sync_myinstant_cards_favorite_status()
         self._set_myinstants_cards_enabled(not self._bulk_active)
         self.favorite_selected_myinstants.setEnabled(False)
 
@@ -4184,6 +4216,7 @@ class MainWindow(QMainWindow):
         if favorite:
             is_bulk = job_id in self._bulk_job_ids
             self._add_sound_to_favorites(path, result.title, "Myinstants")
+            self._sync_myinstant_cards_favorite_status()
             self._bulk_download_finished(job_id)
             if not is_bulk:
                 self.myinstants_status.setText(f"« {result.title} » est disponible hors ligne.")

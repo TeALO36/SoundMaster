@@ -14,12 +14,14 @@ class MyInstantCard(QWidget):
     preview_requested = pyqtSignal(object)
     preview_hovered = pyqtSignal(object)
     favorite_requested = pyqtSignal(object)
+    remove_favorite_requested = pyqtSignal(object)
     selection_changed = pyqtSignal(object, bool)
 
     def __init__(self, result: MyInstantResult, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.result = result
         self._preview_playing = False
+        self._is_favorite = False
         layout = QVBoxLayout(self)
         title = QLabel(f"<b>{result.title}</b>")
         title.setWordWrap(True)
@@ -39,11 +41,32 @@ class MyInstantCard(QWidget):
         self.preview_button.clicked.connect(self._toggle_preview)
         self.favorite_button = QPushButton("★ Ajouter aux favoris")
         self.favorite_button.setToolTip("Télécharger hors ligne et ajouter au tableau de bord")
-        self.favorite_button.clicked.connect(lambda: self.favorite_requested.emit(self.result))
+        self.favorite_button.clicked.connect(self._favorite_clicked)
         actions.addWidget(self.preview_button)
         actions.addWidget(self.favorite_button, 1)
         layout.addLayout(actions)
         self.setObjectName("myInstantCard")
+
+    def _favorite_clicked(self) -> None:
+        if self._is_favorite:
+            self.remove_favorite_requested.emit(self.result)
+        else:
+            self.favorite_requested.emit(self.result)
+
+    def set_is_favorite(self, favorite: bool) -> None:
+        self._is_favorite = favorite
+        if favorite:
+            self.favorite_button.setText("★ Supprimer des favoris")
+            self.favorite_button.setObjectName("ghostButton")
+            self.favorite_button.setToolTip("Retirer ce son de vos favoris du tableau de bord")
+        else:
+            self.favorite_button.setText("★ Ajouter aux favoris")
+            self.favorite_button.setObjectName("secondaryButton")
+            self.favorite_button.setToolTip("Télécharger hors ligne et ajouter au tableau de bord")
+        style = self.favorite_button.style()
+        if style is not None:
+            style.unpolish(self.favorite_button)
+            style.polish(self.favorite_button)
 
     def _toggle_preview(self) -> None:
         """Ask the window to start or stop this card's active preview."""
